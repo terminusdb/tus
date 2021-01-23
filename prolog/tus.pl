@@ -22,6 +22,8 @@ Both client and server implementation of the TUS protocol.
 :- use_module(tus_parse).
 
 /* Options */
+:- meta_predicate valid_options(+, 1).
+
 set_tus_options(Options) :-
     retract_tus_dynamics,
     valid_options(Options, global_tus_option),
@@ -61,13 +63,87 @@ tus_storage_path(Path) :-
     assertz(tus_storage_path_dynamic(Path)).
 
 /*
+File store manipulation utilities.
+*/
+tus_offset_file('offset').
+
+tus_offset_path(URI, Path) :-
+    tus_resource_path(RPath),
+    tus_offset_file(Offset),
+    atomic_list_concat([RPath, '/', Offset], Path).
+
+tus_size_file('size').
+
+tus_size_path(URI, Path) :-
+    tus_resource_path(RPath),
+    tus_size_file(Offset),
+    atomic_list_concat([RPath, '/', Offset], Path).
+
+tus_upload_file('file').
+
+tus_upload_path(URI, Path) :-
+    tus_resource_path(RPath),
+    tus_upload_file(Offset),
+    atomic_list_concat([RPath, '/', Offset], Path).
+
+resource_offset(URI, Offset) :-
+    tus_resource_path(URI, URI_Storage),
+    www_form_encode(URI, Safe),
+
+    tus_offset_path(URI, Offset_File),
+    read_file_to_string(Offset_File, Offset_String, []),
+    atom_number(Offset_String, Offset).
+
+resource_size(URI, Offset) :-
+    tus_resource_path(URI, URI_Storage),
+    www_form_encode(URI, Safe),
+
+    tus_size_path(URI, Offset_File),
+    read_file_to_string(Offset_File, Offset_String, []),
+    atom_number(Offset_String, Offset).
+
+create_file_resource(URI, Size, Name) :-
+    tus_resource_path(URI, Resource),
+    make_directory(Resource),
+    % Size
+    setup_call_cleanup(
+        (   tus_size_path(Resource,Size_Path),
+            open(Size_Path, write, SP)),
+        write(SP, Size),
+        close(SP)),
+
+    % Offset
+    setup_call_cleanup(
+        (   tus_offset_path(Resource,Offset_Path),
+            open(Offset_Path, write, OP)),
+        write(OP, 0), % start at zero
+        close(OP)),
+
+    % File
+    setup_call_cleanup(
+        (   tus_upload_path(Resource,File_Path),
+            open(File_Path, write, FP)),
+        true, % touch
+        close(FP)).
+
+patch_resource(URI, Patch, Offset, Length, New_Offset) :-
+    tus_resource_path(URI, Resource),
+    % ..
+    tus_upload_path(Resource, File_Path),
+
+    open(File_Path, write, Stream, [lock(exclusive)]),
+    seek(
+
+
+/*
+ Server implementation
 
  Requests are structured according to the prolog http library format.
 
  Implemented features of the TUS protocol:
 
  OPTIONS (Discovery)
- POST (Create*)
+ POST (Create)*
  HEAD (Find resumption point)
  PATCH (Send chunk)
 
@@ -104,15 +180,18 @@ tus_dispatch(head,Request) :-
     % Next stage.
     !,
     memberchk(request_uri(URI), Request),
-    resource_current_offset(URI, Offset),
+    resource_offset(URI, Offset),
     format("HTTP/1.1 200 OK~n", []),
     format("Upload-Offset: ~s~n", [Offset]),
     format("Tus-Resumable: 1.0.0~n~n", []).
-
-resource_current_offset(URI, Offset) :-
-    tus_storage_path(Path),
-    true.
-
-create_file_resource(File, Name) :-
-    % how do we remember what file to move to eventually?
-    true.
+tus_dispatch(patch,Request) :-
+    % Next stage.
+    !,
+    memberchk(request_uri(URI), Request),
+    memberchk(content_length(Length)),
+    memberchk(upload_offset(Offset)),
+    http_read_data(Request, Patch, []),
+    patch_resource(URI, Patch, Offset, Length, New_Offset),
+    format("HTTP/1.1 204 No Content~n", []),
+    format("Upload-Offset: ~s~n", [Offset]),
+    format("Tus-Resumable: 1.0.0~n~n", []).
