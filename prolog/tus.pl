@@ -94,6 +94,13 @@ resource_offset(URI, Offset) :-
     read_file_to_string(Offset_File, Offset_String, []),
     atom_number(Offset_String, Offset).
 
+set_resource_offset(URI, Offset) :-
+    setup_call_cleanup(
+        (   tus_offset_path(Resource,Offset_Path),
+            open(Offset_Path, write, OP)),
+        write(OP, Offset),
+        close(OP)).
+
 resource_size(URI, Offset) :-
     tus_resource_path(URI, URI_Storage),
     www_form_encode(URI, Safe),
@@ -102,22 +109,21 @@ resource_size(URI, Offset) :-
     read_file_to_string(Offset_File, Offset_String, []),
     atom_number(Offset_String, Offset).
 
-create_file_resource(URI, Size, Name) :-
-    tus_resource_path(URI, Resource),
-    make_directory(Resource),
-    % Size
+set_resource_size(URI, Size) :-
     setup_call_cleanup(
         (   tus_size_path(Resource,Size_Path),
             open(Size_Path, write, SP)),
         write(SP, Size),
-        close(SP)),
+        close(SP)).
+
+create_file_resource(URI, Size, Name) :-
+    tus_resource_path(URI, Resource),
+    make_directory(Resource),
+    % Size
+    set_resource_size(Resource, Size),
 
     % Offset
-    setup_call_cleanup(
-        (   tus_offset_path(Resource,Offset_Path),
-            open(Offset_Path, write, OP)),
-        write(OP, 0), % start at zero
-        close(OP)),
+    set_resource_offset(Resource, Offset),
 
     % File
     setup_call_cleanup(
@@ -127,12 +133,29 @@ create_file_resource(URI, Size, Name) :-
         close(FP)).
 
 patch_resource(URI, Patch, Offset, Length, New_Offset) :-
+    % sanity check
+    (   string_length(Patch, Length)
+    ->  true
+    ;   throw(error(bad_length(Length)))),
+
+    (   resource_offset(URI, Offset)
+    ->  true
+    ;   throw(error(bad_offset(Offset)))),
+
     tus_resource_path(URI, Resource),
-    % ..
     tus_upload_path(Resource, File_Path),
 
-    open(File_Path, write, Stream, [lock(exclusive)]),
-    seek(
+    setup_call_cleanup(
+        open(File_Path, write, Stream, [lock(exclusive)]),
+        (
+            seek(Stream, Offset, bof, _),
+            format(Stream, "~s", [Patch]),
+            New_Offset is Offset + Length,
+
+            set_resource_offset(Resource, New_Offset)
+        ),
+        close(Stream)
+    ).
 
 
 /*
