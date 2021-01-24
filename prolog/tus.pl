@@ -1,7 +1,7 @@
 :- module(tus, [set_tus_options/1,         % +Options
-                tus_dispatch/2,             % +Request
+                tus_dispatch/1,             % +Request
                 tus_dispatch/2,             % +Method, +Request
-                tus_upload/2                % +Method, +URI
+                tus_upload/3                % +Method, +Endpoint_URI, +Resource_URI
                ]).
 
 /** <module> TUS Protocol
@@ -420,7 +420,7 @@ tus_upload(File, Endpoint, Resource) :-
     chunk_directive(Length, Chunk_Size, Directive),
 
     maplist({File, Resource}/[Chunk-Position]>>(
-                format(user_error, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
+                debug(tus, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
                 tus_patch(Resource, File, Chunk, Position)
             ),
             Directive).
@@ -458,7 +458,7 @@ test(parse_upload_metadata, [
     tus_resource_name(Example, Name),
     tus_resource_path(Name, Resource),
     read_file_to_string(Resource, Result, []),
-    writeq(Result), nl,
+
     Result = Content.
 
 :- end_tests(tus).
