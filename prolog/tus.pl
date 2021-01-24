@@ -1,12 +1,30 @@
 :- module(tus, [set_tus_options/1,         % +Options
                 tus_dispatch/1,             % +Request
                 tus_dispatch/2,             % +Method, +Request
-                tus_upload/3                % +Method, +Endpoint_URI, +Resource_URI
+                tus_upload/3                % +File, +Endpoint_URI, +Resource_URI
                ]).
 
 /** <module> TUS Protocol
 
-Both client and server implementation of the TUS protocol.
+ Both client and server implementation of the TUS protocol.
+
+ The TUS protocol allows resumable file uploads via HTTP in swipl
+ [https://tus.io/](https://tus.io/)
+
+ Server implementation
+
+ Requests are structured according to the prolog http library format.
+
+ Implemented features of the TUS protocol:
+
+ OPTIONS (Discovery)
+ POST (Create)*
+ HEAD (Find resumption point)
+ PATCH (Send chunk)
+
+ * Suggested
+
+*/
 
 */
 
@@ -22,7 +40,7 @@ Both client and server implementation of the TUS protocol.
 :- use_module(library(http/thread_httpd)).
 
 /* parsing tools */
-:- use_module(tus_parse).
+:- use_module(tus/tus_parse).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
@@ -37,6 +55,17 @@ verify_options([H|T], Pred) :-
     ;   throw(error(domain_error(Pred, H), _))
     ).
 
+/**
+ * set_tus_options(+Options) is det.
+ *
+ * Sets the global options for the tus server and client.
+ *
+ * @arg Options Includes the following options:
+ * * tus_storage_path(Path): Location of server storage folder.
+ * * tus_max_size(Size): Maximum chunk size accepted by the server.
+ * * tus_client_chunk_size(Size)): Size of chunks to be sent to the server.
+ *
+ */
 set_tus_options(Options) :-
     retract_tus_dynamics,
     valid_options(Options, global_tus_option),
@@ -258,31 +287,40 @@ resumable_endpoint(Request, Name, Endpoint) :-
     terminal_slash(Pre_Base,Base),
     format(atom(Endpoint), "~s://~s:~d~s~s", [Protocol,Server,Port,Base,Name]).
 
-/*
- Server implementation
-
- Requests are structured according to the prolog http library format.
-
- Implemented features of the TUS protocol:
-
- OPTIONS (Discovery)
- POST (Create)*
- HEAD (Find resumption point)
- PATCH (Send chunk)
-
- * Suggested
-
-*/
-
 % This is a terrible way to get the output stream...
 % something is broken - should be set in current_output
 http_output_stream(Request, Out) :-
     memberchk(pool(client(_,_,_,Out)), Request).
 
+/**
+ * tus_dispatch(+Request) is semidet.
+ *
+ * Dispatchs various TUS requests to the apropriate handlers.
+ *
+ * Should be callable from `http_handler/3` with something along the lines of:
+ *
+ * ``` http_handler(root(files), tus_dispatch,
+                [ methods([options,head,post,patch]),
+                  prefix
+                ])
+   ```
+ *
+ * @arg Request is the standard Request object from the http_server
+ *
+ */
 tus_dispatch(Request) :-
     memberchk(method(Method),Request),
     tus_dispatch(Method,Request).
 
+/**
+ * tus_dispatch(+Mode, +Request) is semidet.
+ *
+ * Version of `tus_dispatch/1` which includes explicit mode.
+ *
+ * @arg Mode One of: options, head, post, patch
+ * @arg Request is the standard Request object from the http_server
+ *
+ */
 tus_dispatch(options,Request) :-
     % Options
     !,
@@ -412,6 +450,16 @@ tus_patch(Endpoint, File, Chunk, Position) :-
         close(Stream)
     ).
 
+/**
+ * tus_upload(+File, +Endpoint, -Resource) is semidet.
+ *
+ * Upload `File` to `Endpoint` returning `Resource`
+ *
+ * @arg File A fully qualified file path
+ * @arg Endpoint The URL of a TUS server
+ * @arg Resource The URL which refers to the uploaded resource.
+ *
+ */
 tus_upload(File, Endpoint, Resource) :-
     tus_options(Endpoint, Options),
     tus_create(Endpoint, File, Length, Resource),
