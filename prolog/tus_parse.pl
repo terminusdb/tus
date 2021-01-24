@@ -38,10 +38,13 @@ file_codes([]) -->
     [].
 
 file(File) -->
-    file_codes(File_Codes),
-    { atom_codes(File_64,File_Codes),
-      base64_encoded(File,File_64, [])
-    }.
+    { when(ground(File),
+           base64_encoded(File,File_64, [])),
+      when((   ground(File_Codes)
+           ;   ground(File_64)),
+           atom_codes(File_64,File_Codes))
+    },
+    file_codes(File_Codes).
 
 upload_metadata(filename(File,Options)) -->
     "filename", " ",
@@ -57,8 +60,10 @@ next_option_codes([H|T]) -->
     next_option_codes(T).
 
 next_option(Option) -->
-    next_option_codes(Codes),
-    { atom_codes(Option,Codes)}.
+    { when((   ground(Option)
+           ;   ground(Codes)),
+           atom_codes(Option,Codes)) },
+    next_option_codes(Codes).
 
 file_options([Option|Remainder]) -->
     ",",
@@ -68,8 +73,10 @@ file_options([]) -->
     [].
 
 parse_upload_metadata(Metadata, Metadata_Struct) :-
-     atom_codes(Metadata, Codes),
-     once(phrase(upload_metadata(Metadata_Struct), Codes)).
+    when((   ground(Metadata)
+         ;   ground(Codes)),
+         atom_codes(Metadata, Codes)),
+    once(phrase(upload_metadata(Metadata_Struct), Codes)).
 
 :- begin_tests(parse).
 
@@ -77,6 +84,11 @@ test(parse_upload_metadata, []) :-
     String = 'filename d29ybGRfZG9taW5hdGlvbl9wbGFuLnBkZg==,is_confidential',
     parse_upload_metadata(String, Struct),
     Struct = filename("world_domination_plan.pdf",[is_confidential]).
+
+test(parse_upload_metadata_backwards, []) :-
+    Struct = filename("world_domination_plan.pdf",[is_confidential]),
+    parse_upload_metadata(String, Struct),
+    String = 'filename d29ybGRfZG9taW5hdGlvbl9wbGFuLnBkZg==,is_confidential'.
 
 :- end_tests(parse).
 
