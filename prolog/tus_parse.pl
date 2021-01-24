@@ -38,7 +38,8 @@ file_codes([]) -->
     [].
 
 file(File) -->
-    { when(ground(File),
+    { when((   ground(File)
+           ;   ground(File_64)),
            base64_encoded(File,File_64, [])),
       when((   ground(File_Codes)
            ;   ground(File_64)),
@@ -89,6 +90,11 @@ test(parse_upload_metadata_backwards, []) :-
     Struct = filename("world_domination_plan.pdf",[is_confidential]),
     parse_upload_metadata(String, Struct),
     String = 'filename d29ybGRfZG9taW5hdGlvbl9wbGFuLnBkZg==,is_confidential'.
+
+test(parse_upload_metadata_backwards_empty, []) :-
+    Struct = filename("world_domination_plan.pdf",[]),
+    parse_upload_metadata(String, Struct),
+    String = 'filename d29ybGRfZG9taW5hdGlvbl9wbGFuLnBkZg=='.
 
 :- end_tests(parse).
 

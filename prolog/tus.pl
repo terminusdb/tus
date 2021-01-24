@@ -1,4 +1,5 @@
 :- module(tus, [set_tus_options/1,         % +Options
+                tus_dispatch/2,             % +Request
                 tus_dispatch/2,             % +Method, +Request
                 tus_upload/2                % +Method, +URI
                ]).
@@ -10,6 +11,7 @@ Both client and server implementation of the TUS protocol.
 */
 
 :- use_module(library(http/http_server_files)).
+:- use_module(library(http/http_dispatch)).
 :- use_module(library(http/html_write)).
 :- use_module(library(http/http_path)).
 :- use_module(library(http/html_head)).
@@ -17,6 +19,7 @@ Both client and server implementation of the TUS protocol.
 :- use_module(library(http/http_json)).
 :- use_module(library(http/http_client)).
 :- use_module(library(http/http_header)).
+:- use_module(library(http/thread_httpd)).
 
 /* parsing tools */
 :- use_module(tus_parse).
@@ -75,10 +78,10 @@ tus_storage_path(Path) :-
     memberchk(tus_storage_path(Path), Options),
     assertz(tus_storage_path_dynamic(Path)),
     !.
-tus_storage_path(Path) :-
+tus_storage_path(Temp) :-
     tmp_file('tus_storage', Temp),
     make_directory(Temp),
-    assertz(tus_storage_path_dynamic(Path)).
+    assertz(tus_storage_path_dynamic(Temp)).
 
 tus_extension_list('creation').
 
@@ -114,8 +117,8 @@ tus_upload_file('file').
 
 tus_upload_path(File, Path) :-
     tus_resource_path(File, RPath),
-    tus_upload_file(File),
-    atomic_list_concat([RPath, '/', File], Path).
+    tus_upload_file(Upload),
+    atomic_list_concat([RPath, '/', Upload], Path).
 
 resource_offset(File, Offset) :-
     tus_offset_path(File, Offset_File),
@@ -126,7 +129,7 @@ set_resource_offset(File, Offset) :-
     setup_call_cleanup(
         (   tus_offset_path(File, Offset_Path),
             open(Offset_Path, write, OP)),
-        write(OP, Offset),
+        format(OP, "~d", [Offset]),
         close(OP)).
 
 resource_size(File, Offset) :-
@@ -138,7 +141,7 @@ set_resource_size(File, Size) :-
     setup_call_cleanup(
         (   tus_size_path(File, Size_Path),
             open(Size_Path, write, SP)),
-        write(SP, Size),
+        format(SP, "~d", [Size]),
         close(SP)).
 
 create_file_resource(File, Size, Name) :-
@@ -146,19 +149,21 @@ create_file_resource(File, Size, Name) :-
     tus_resource_path(File, Resource),
     make_directory(Resource),
     % Size
-    set_resource_size(Resource, Size),
+    set_resource_size(File, Size),
 
     % Offset
-    set_resource_offset(Resource, 0),
+    set_resource_offset(File, 0),
 
     % File
     setup_call_cleanup(
-        (   tus_upload_path(Resource,File_Path),
+        (   tus_upload_path(File,File_Path),
             open(File_Path, write, FP)),
         true, % touch
         close(FP)).
 
-patch_resource(File, Patch, Offset, Length, New_Offset) :-
+patch_resource(Name, Patch, Offset, Length, New_Offset) :-
+    tus_resource_name(File, Name),
+
     % sanity check
     (   string_length(Patch, Length)
     ->  true
@@ -168,8 +173,10 @@ patch_resource(File, Patch, Offset, Length, New_Offset) :-
     ->  true
     ;   throw(error(bad_offset(Offset)))),
 
+    format(user_error, 'Testing~n~n', []),
     tus_resource_path(File, Resource),
-    tus_upload_path(Resource, File_Path),
+    format(user_error, 'Testing~n~n', []),
+    tus_upload_path(File, File_Path),
 
     setup_call_cleanup(
         open(File_Path, write, Stream, [lock(exclusive)]),
@@ -178,7 +185,7 @@ patch_resource(File, Patch, Offset, Length, New_Offset) :-
             format(Stream, "~s", [Patch]),
             New_Offset is Offset + Length,
 
-            set_resource_offset(Resource, New_Offset)
+            set_resource_offset(File, New_Offset)
         ),
         close(Stream)
     ).
@@ -188,7 +195,7 @@ tus_client_effective_chunk_size(Options, Chunk) :-
     tus_client_chunk_size(Size),
     Chunk is min(Max,Size).
 
-chunk_directive_(Length, Chunk_Size, [Length-Length]) :-
+chunk_directive_(Length, Chunk_Size, [Length-0]) :-
     Length =< Chunk_Size,
     !.
 chunk_directive_(Length, Chunk_Size, [Chunk_Size-Length|Directive]) :-
@@ -218,7 +225,7 @@ resumable_endpoint(Request, Name, Endpoint) :-
     memberchk(port(Port),Request),
     memberchk(request_uri(Pre_Base),Request),
     terminal_slash(Pre_Base,Base),
-    format(atom(Endpoint), "~s://~s:~s~s/~s", [Protocol,Server,Port,Base,Name]).
+    format(atom(Endpoint), "~s://~s:~d~s~s", [Protocol,Server,Port,Base,Name]).
 
 /*
  Server implementation
@@ -236,52 +243,79 @@ resumable_endpoint(Request, Name, Endpoint) :-
 
 */
 
-tus_dispatch(options,_Request) :-
+% This is a terrible way to get the output stream...
+% something is broken - should be set in current_output
+http_output_stream(Request, Out) :-
+    memberchk(pool(client(_,_,_,Out)), Request).
+
+tus_dispatch(Request) :-
+    memberchk(method(Method),Request),
+    tus_dispatch(Method,Request).
+
+tus_dispatch(options,Request) :-
     % Options
     !,
-    format("HTTP/1.1 204 No Content~n", []),
-    format("Tus-Resumable: ~s~n", []),
     tus_version_list(Version_List),
-    format("Tus-Version: ~s~n", [Version_List]),
     tus_max_size(Max_Size),
-    format("Tus-Max-Size: ~s~n", [Max_Size]),
     tus_extension_list(Extension_List),
-    format("Tus-Extension: ~s~n~n", [Extension_List]).
+    http_output_stream(Request, Out),
+    http_status_reply(no_content, Out,
+                      ['Tus-Resumable'('1.0.0'),
+                       'Tus-Version'(Version_List),
+                       'Tus-Max-Size'(Max_Size),
+                       'Tus-Extension'(Extension_List)],
+                      204).
 tus_dispatch(post,Request) :-
     % Create
     !,
-    memberchk(upload_length(Length),Request),
+    memberchk(upload_length(Length_Atom),Request),
+    atom_number(Length_Atom, Length),
+
     memberchk(upload_metadata(Metadata),Request),
+    parse_upload_metadata(Metadata, Struct),
+
     memberchk(tus_resumable(Version),Request),
     accept_tus_version(Version),
-    parse_upload_metadata(Metadata, Struct),
+
     Struct = filename(File,_Options), % ignoring options for the minute
+
+    format(user_error, "~q~n", [Struct]),
+
     create_file_resource(File, Length, Name),
     resumable_endpoint(Request, Name, Endpoint),
-    format("HTTP/1.1 201 Created~n", []),
-    format("Location: ~s~n",[Endpoint]),
-    format("Tus-Resumable: 1.0.0~n~n", []).
+    http_output_stream(Request, Out),
+    http_status_reply(created(Endpoint), Out,
+                      ['Tus-Resumable'('1.0.0'),
+                       'Location'(Endpoint)],
+                      _Code).
 tus_dispatch(head,Request) :-
     % Next stage.
     !,
     memberchk(request_uri(URI), Request),
     uri_resource(URI, Resource),
     resource_offset(Resource, Offset),
-    format("HTTP/1.1 200 OK~n", []),
-    format("Upload-Offset: ~s~n", [Offset]),
-    format("Tus-Resumable: 1.0.0~n~n", []).
+    http_output_stream(Request, Out),
+    http_status_reply(ok, Out,
+                      ['Tus-Resumable'('1.0.0'),
+                       'Upload-Offset'(Offset)],
+                      _Code).
 tus_dispatch(patch,Request) :-
     % Next stage.
     !,
     memberchk(request_uri(URI),Request),
     memberchk(content_length(Length),Request),
-    memberchk(upload_offset(Offset),Request),
+    atom_number(Length_Atom, Length),
+    memberchk(upload_offset(Offset_Atom),Request),
+    atom_number(Offset_Atom, Offset),
+
     http_read_data(Request, Patch, []),
     uri_resource(URI, Resource),
     patch_resource(Resource, Patch, Offset, Length, New_Offset),
-    format("HTTP/1.1 204 No Content~n", []),
-    format("Upload-Offset: ~s~n", [New_Offset]),
-    format("Tus-Resumable: 1.0.0~n~n", []).
+    http_output_stream(Request, Out),
+    http_status_reply(no_content, Out,
+                      ['Tus-Resumable'('1.0.0'),
+                       'Upload-Offset'(New_Offset)],
+                      _Code).
 
 /*
  Client implementation
@@ -303,22 +337,26 @@ tus_process_options([X|Rest_In],[X|Rest_Out]) :-
     tus_process_options(Rest_In, Rest_Out).
 
 tus_options(Endpoint, Options) :-
-    http_get(Endpoint, _, [
+    http_get(Endpoint, Response, [
                  method(options),
-                 reply_header(Pre_Options)
+                 reply_header(Pre_Options),
+                 status_code(Code)
              ]),
     tus_process_options(Pre_Options, Options).
 
 tus_create(Endpoint, File, Length, Resource) :-
     size_file(File, Length),
-    parse_upload_metadata(filename(File,[]), Metadata),
-    http_get(Endpoint, Resource, [
+    parse_upload_metadata(Metadata,filename(File,[])),
+    http_get(Endpoint, _, [
                  method(post),
                  request_header('Content-Length'=0),
                  request_header('Upload-Length'=Length),
-                 request_header('Upload-Metdata'=Metadata),
-                 request_header('Tus-Resumable'='1.0.0')
-             ]).
+                 request_header('Upload-Metadata'=Metadata),
+                 request_header('Tus-Resumable'='1.0.0'),
+                 reply_header(Reply_Header),
+                 status_code(Code)
+             ]),
+    memberchk(location(Resource), Reply_Header).
 
 tus_patch(Endpoint, File, Chunk, Position) :-
     setup_call_cleanup(
@@ -345,33 +383,32 @@ tus_upload(File, Endpoint) :-
     chunk_directive(Length, Chunk_Size, Directive),
 
     maplist({File, Resource}/[Chunk-Position]>>(
-                tus_patch(Resource, File, Chunk, Position),
-                format(user_error, "Chunk: ~q Position: ~q", [Chunk, Position])
+                format(user_error, "Chunk: ~q Position: ~q", [Chunk, Position]),
+                tus_patch(Resource, File, Chunk, Position)
             ),
             Directive).
 
 
 :- begin_tests(tus).
 
-spawn_server(URL, PID) :-
+spawn_server(URL, Port) :-
     random_between(49152, 65535, Port),
     http_server(http_dispatch, [port(Port), workers(1)]),
-    http_handler(files, tus_dispatch(Method),
-                 [ method(Method),
-                   methods([options,get,head,post,patch]),
+    http_handler(root(files), tus_dispatch,
+                 [ methods([options,head,post,patch]),
                    prefix
-                 ])
-    format(atom(URL), 'http://127.0.0.1:~s/files', [Port]).
+                 ]),
+    format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
 
-kill_server(PID) :-
-    process_kill(PID),
-    process_wait(PID, _).
+kill_server(Port) :-
+    http_stop_server(Port,[]).
 
 test(parse_upload_metadata, [
-         setup((spawn_server(URL, PID),
-                set_tus_options([tus_client_chunk_size(4)])),
-         cleanup(kill_server(PID))
+         setup((spawn_server(URL, Port),
+                set_tus_options([tus_client_chunk_size(4)]))),
+         cleanup(kill_server(Port))
      ]) :-
+
     tmp_file('example', Example),
     open(Example, write, Stream),
     format(Stream, '~s', ['asdf fdsa yes yes yes']),
