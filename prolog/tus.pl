@@ -64,7 +64,7 @@ tus_max_size(17_179_869_184).
 
 tus_client_chunk_size(Size) :-
     current_prolog_flag(tus_options, Options),
-    memberchk(tus_max_size(Size), Options),
+    memberchk(tus_client_chunk_size(Size), Options),
     !.
 tus_client_chunk_size(16_777_216).
 
@@ -92,33 +92,39 @@ accept_tus_version(Version) :-
 File store manipulation utilities.
 */
 tus_resource_name(File, Name) :-
-    www_form_encode(File, Name).
+    md5_hash(File, Name, []).
 
 tus_resource_path(File, Path) :-
     tus_storage_path(Storage),
-    tus_resource_name(File, Name),
-    atomic_list_concat([Storage, '/', Name], Path).
+    atomic_list_concat([Storage, '/', File], Path).
 
-tus_offset_file('offset').
+tus_offset_suffix('offset').
 
 tus_offset_path(File, Path) :-
     tus_resource_path(File, RPath),
-    tus_offset_file(Offset),
-    atomic_list_concat([RPath, '/', Offset], Path).
+    tus_offset_suffix(Offset),
+    atomic_list_concat([RPath, '.', Offset], Path).
 
-tus_size_file('size').
+tus_size_suffix('size').
 
 tus_size_path(File, Path) :-
     tus_resource_path(File, RPath),
-    tus_size_file(Size),
-    atomic_list_concat([RPath, '/', Size], Path).
+    tus_size_suffix(Size),
+    atomic_list_concat([RPath, '.', Size], Path).
 
-tus_upload_file('file').
+tus_upload_suffix('upload').
 
 tus_upload_path(File, Path) :-
     tus_resource_path(File, RPath),
-    tus_upload_file(Upload),
-    atomic_list_concat([RPath, '/', Upload], Path).
+    tus_upload_suffix(Upload),
+    atomic_list_concat([RPath, '.', Upload], Path).
+
+tus_lock_suffix('lock').
+
+tus_lock_path(File, Path) :-
+    tus_resource_path(File, RPath),
+    tus_lock_suffix(Lock),
+    atomic_list_concat([RPath, '.', Lock], Path).
 
 resource_offset(File, Offset) :-
     tus_offset_path(File, Offset_File),
@@ -130,7 +136,8 @@ set_resource_offset(File, Offset) :-
         (   tus_offset_path(File, Offset_Path),
             open(Offset_Path, write, OP)),
         format(OP, "~d", [Offset]),
-        close(OP)).
+        close(OP)
+    ).
 
 resource_size(File, Offset) :-
     tus_size_path(File, Offset_File),
@@ -142,53 +149,77 @@ set_resource_size(File, Size) :-
         (   tus_size_path(File, Size_Path),
             open(Size_Path, write, SP)),
         format(SP, "~d", [Size]),
-        close(SP)).
+        close(SP)
+    ).
 
-create_file_resource(File, Size, Name) :-
+% member(Status, [exists, created])
+create_file_resource(File, _, Name, Status) :-
     tus_resource_name(File, Name),
-    tus_resource_path(File, Resource),
-    make_directory(Resource),
-    % Size
-    set_resource_size(File, Size),
-
-    % Offset
-    set_resource_offset(File, 0),
+    tus_resource_path(Name, Resource_Path),
+    exists_file(Resource_Path),
+    !,
+    Status=exists.
+create_file_resource(File, Size, Name, Status) :-
+    tus_resource_name(File, Name),
 
     % File
     setup_call_cleanup(
-        (   tus_upload_path(File,File_Path),
-            open(File_Path, write, FP)),
-        true, % touch
-        close(FP)).
+        (   tus_lock_path(Name, Lock_Path),
+            open(Lock_Path, write, LP, [lock(exclusive)]) % Get an exclusive lock
+        ),
+        setup_call_cleanup(
+            (   tus_upload_path(Name,File_Path),
+                open(File_Path, write, FP)
+            ),
+            (   % Size
+                set_resource_size(Name, Size),
+
+                % Offset
+                set_resource_offset(Name, 0)
+            ),
+            close(FP)
+        ),
+        close(LP)
+    ),
+    Status=created.
 
 patch_resource(Name, Patch, Offset, Length, New_Offset) :-
-    tus_resource_name(File, Name),
 
     % sanity check
     (   string_length(Patch, Length)
     ->  true
     ;   throw(error(bad_length(Length)))),
 
-    (   resource_offset(File, Offset)
+    (   resource_offset(Name, Offset)
     ->  true
     ;   throw(error(bad_offset(Offset)))),
 
-    format(user_error, 'Testing~n~n', []),
-    tus_resource_path(File, Resource),
-    format(user_error, 'Testing~n~n', []),
-    tus_upload_path(File, File_Path),
-
     setup_call_cleanup(
-        open(File_Path, write, Stream, [lock(exclusive)]),
-        (
-            seek(Stream, Offset, bof, _),
-            format(Stream, "~s", [Patch]),
-            New_Offset is Offset + Length,
-
-            set_resource_offset(File, New_Offset)
+        (   tus_lock_path(Name, Lock_Path),
+            open(Lock_Path, write, LP, [lock(exclusive)]) % Get an exclusive lock
         ),
-        close(Stream)
+        (   setup_call_cleanup(
+                (   tus_upload_path(Name, Upload_Path),
+                    open(Upload_Path, update, UP)
+                ),
+                (   seek(UP, Offset, bof, _),
+                    format(UP, "~s", [Patch]),
+                    New_Offset is Offset + Length,
+
+                    set_resource_offset(Name, New_Offset)
+                ),
+                close(UP)
+            ),
+            resource_size(Name, Size),
+            (   Size = New_Offset
+            ->  tus_resource_path(Name, Resource_Path),
+                rename_file(Upload_Path, Resource_Path)
+            ;   true
+            )
+        ),
+        close(LP)
     ).
+
 
 tus_client_effective_chunk_size(Options, Chunk) :-
     memberchk(tus_max_size(Max), Options),
@@ -198,7 +229,7 @@ tus_client_effective_chunk_size(Options, Chunk) :-
 chunk_directive_(Length, Chunk_Size, [Length-0]) :-
     Length =< Chunk_Size,
     !.
-chunk_directive_(Length, Chunk_Size, [Chunk_Size-Length|Directive]) :-
+chunk_directive_(Length, Chunk_Size, [Chunk_Size-New_Length|Directive]) :-
     Length > Chunk_Size,
     !,
     New_Length is Length - Chunk_Size,
@@ -279,15 +310,19 @@ tus_dispatch(post,Request) :-
 
     Struct = filename(File,_Options), % ignoring options for the minute
 
-    format(user_error, "~q~n", [Struct]),
-
-    create_file_resource(File, Length, Name),
+    create_file_resource(File, Length, Name, Status),
     resumable_endpoint(Request, Name, Endpoint),
     http_output_stream(Request, Out),
-    http_status_reply(created(Endpoint), Out,
-                      ['Tus-Resumable'('1.0.0'),
-                       'Location'(Endpoint)],
-                      _Code).
+
+    (   Status = exists
+    ->  http_status_reply(conflict, Out,
+                          ['Tus-Resumable'('1.0.0'),
+                           'Location'(Endpoint)],
+                          _Code)
+    ;   http_status_reply(created(Endpoint), Out,
+                          ['Tus-Resumable'('1.0.0'),
+                           'Location'(Endpoint)],
+                          _Code)).
 tus_dispatch(head,Request) :-
     % Next stage.
     !,
@@ -297,14 +332,15 @@ tus_dispatch(head,Request) :-
     http_output_stream(Request, Out),
     http_status_reply(ok, Out,
                       ['Tus-Resumable'('1.0.0'),
-                       'Upload-Offset'(Offset)],
+                       'Upload-Offset'(Offset),
+                       'Cache-Control'('no-store')],
                       _Code).
 tus_dispatch(patch,Request) :-
     % Next stage.
     !,
     memberchk(request_uri(URI),Request),
     memberchk(content_length(Length),Request),
-    atom_number(Length_Atom, Length),
+
     memberchk(upload_offset(Offset_Atom),Request),
     atom_number(Offset_Atom, Offset),
 
@@ -337,10 +373,10 @@ tus_process_options([X|Rest_In],[X|Rest_Out]) :-
     tus_process_options(Rest_In, Rest_Out).
 
 tus_options(Endpoint, Options) :-
-    http_get(Endpoint, Response, [
+    http_get(Endpoint, _, [
                  method(options),
                  reply_header(Pre_Options),
-                 status_code(Code)
+                 status_code(204)
              ]),
     tus_process_options(Pre_Options, Options).
 
@@ -349,14 +385,15 @@ tus_create(Endpoint, File, Length, Resource) :-
     parse_upload_metadata(Metadata,filename(File,[])),
     http_get(Endpoint, _, [
                  method(post),
-                 request_header('Content-Length'=0),
                  request_header('Upload-Length'=Length),
                  request_header('Upload-Metadata'=Metadata),
                  request_header('Tus-Resumable'='1.0.0'),
                  reply_header(Reply_Header),
-                 status_code(Code)
+                 status_code(Status)
              ]),
-    memberchk(location(Resource), Reply_Header).
+    (   Status = 409
+    ->  throw(error(file_already_exists(File), _))
+    ;   memberchk(location(Resource), Reply_Header)).
 
 tus_patch(Endpoint, File, Chunk, Position) :-
     setup_call_cleanup(
@@ -383,7 +420,7 @@ tus_upload(File, Endpoint) :-
     chunk_directive(Length, Chunk_Size, Directive),
 
     maplist({File, Resource}/[Chunk-Position]>>(
-                format(user_error, "Chunk: ~q Position: ~q", [Chunk, Position]),
+                format(user_error, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
                 tus_patch(Resource, File, Chunk, Position)
             ),
             Directive).
@@ -409,11 +446,19 @@ test(parse_upload_metadata, [
          cleanup(kill_server(Port))
      ]) :-
 
-    tmp_file('example', Example),
+    File = 'example.txt',
+    tmp_file(File, Example),
     open(Example, write, Stream),
-    format(Stream, '~s', ['asdf fdsa yes yes yes']),
+    Content = "asdf fdsa yes yes yes",
+    format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_upload(Example, URL).
+    tus_upload(Example, URL),
+
+    tus_resource_name(Example, Name),
+    tus_resource_path(Name, Resource),
+    read_file_to_string(Resource, Result, []),
+    writeq(Result), nl,
+    Result = Content.
 
 :- end_tests(tus).
