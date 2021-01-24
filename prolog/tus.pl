@@ -412,7 +412,7 @@ tus_patch(Endpoint, File, Chunk, Position) :-
         close(Stream)
     ).
 
-tus_upload(File, Endpoint) :-
+tus_upload(File, Endpoint, Resource) :-
     tus_options(Endpoint, Options),
     tus_create(Endpoint, File, Length, Resource),
 
@@ -453,7 +453,7 @@ test(parse_upload_metadata, [
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_upload(Example, URL),
+    tus_upload(Example, URL, _Resource),
 
     tus_resource_name(Example, Name),
     tus_resource_path(Name, Resource),
