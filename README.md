@@ -6,6 +6,11 @@ https://tus.io/)
 
 This package implements both the server handlers and a simple client.
 
+The package implements the core protocol along with two extensions:
+
+* Creation
+* Expiration
+
 ## Examples
 
 ### Server
@@ -42,12 +47,10 @@ manipulate files on the remote end.
 
 ## TODO
 
-We have not implemented any of the optional parts of the protocol save
-for `Create`. In particular we need functionality from `Expires`.
+The remaining extensions would be desirable:
 
-We also have not implemented respect for the `X-HTTP-Method-Override`
-header which is a TUS requirement and as such we have not completely
-implemented the `Core` according to specfication as yet.
+* Checksum
+* Concatenation
 
 ## Copyright
 

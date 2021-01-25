@@ -80,6 +80,24 @@ global_tus_option(tus_max_size(Size)) :-
 global_tus_option(tus_client_chunk_size(Size)) :-
     must_be(positive_integer, Size).
 
+tus_default_options(
+    [
+        tus_max_size(17_179_869_184),
+        tus_client_chunk_size(16_777_216),
+        tus_expiry_seconds(86400),
+        tus_storage_path(_Dummy)
+    ]
+).
+
+tus_merged_options(Options) :-
+    tus_default_options(Defaults),
+    current_prolog_flag(tus_options, User),
+    merge_options(User, Defaults, Options).
+
+get_tus_option(Option) :-
+    tus_merged_options(Options),
+    option(Option, Options).
+
 :- dynamic tus_storage_path_dynamic/1.
 
 retract_tus_dynamics :-
@@ -89,19 +107,16 @@ retract_tus_dynamics :-
 tus_version_list('1.0.0').
 
 tus_max_size(Size) :-
-    current_prolog_flag(tus_options, Options),
-    memberchk(tus_max_size(Size), Options),
-    !.
-tus_max_size(17_179_869_184).
+    get_tus_option(tus_max_size(Size)).
 
 tus_client_chunk_size(Size) :-
-    current_prolog_flag(tus_options, Options),
-    memberchk(tus_client_chunk_size(Size), Options),
-    !.
-tus_client_chunk_size(16_777_216).
+    get_tus_option(tus_client_chunk_size(Size)).
+
+tus_expiry_seconds(Seconds) :-
+    get_tus_option(tus_expiry_seconds(Seconds)).
 
 tus_extension(creation).
-%tus_extension(expiration).
+tus_extension(expiration).
 
 tus_extension_list(Atom) :-
     findall(Extension,
@@ -124,6 +139,11 @@ tus_storage_path(Temp) :-
 
 accept_tus_version(Version) :-
     member(Version, ['1.0.0']).
+
+expiration_timestamp(Expiry) :-
+    get_time(Time),
+    tus_expiry_seconds(Seconds),
+    Expiry is Time + Seconds.
 
 /*
 File store manipulation utilities.
@@ -170,6 +190,13 @@ tus_lock_path(File, Path) :-
     tus_lock_suffix(Lock),
     atomic_list_concat([RPath, '.', Lock], Path).
 
+tus_expiry_suffix('expiry').
+
+tus_expiry_path(File, Path) :-
+    tus_resource_path(File, RPath),
+    tus_expiry_suffix(Offset),
+    atomic_list_concat([RPath, '.', Offset], Path).
+
 resource_offset(File, Offset) :-
     tus_offset_path(File, Offset_File),
     read_file_to_string(Offset_File, Offset_String, []),
@@ -196,7 +223,20 @@ set_resource_size(File, Size) :-
         close(SP)
     ).
 
-% member(Status, [exists, created])
+resource_expiry(File, Offset) :-
+    tus_expiry_path(File, Offset_File),
+    read_file_to_string(Offset_File, Offset_String, []),
+    atom_number(Offset_String, Offset).
+
+set_resource_expiry(File, Size) :-
+    setup_call_cleanup(
+        (   tus_expiry_path(File, Size_Path),
+            open(Size_Path, write, SP)),
+        format(SP, "~q", [Size]),
+        close(SP)
+    ).
+
+% member(Status, [exists, expires(Expiry)])
 create_file_resource(File, _, Name, Status) :-
     tus_resource_name(File, Name),
     tus_resource_path(Name, Resource_Path),
@@ -219,13 +259,17 @@ create_file_resource(File, Size, Name, Status) :-
                 set_resource_size(Name, Size),
 
                 % Offset
-                set_resource_offset(Name, 0)
+                set_resource_offset(Name, 0),
+
+                % Expires
+                expiration_timestamp(Expiry),
+                set_resource_expiry(Name, Expiry)
             ),
             close(FP)
         ),
         close(LP)
     ),
-    Status=created.
+    Status=expires(Expiry).
 
 patch_resource(Name, Patch, Offset, Length, New_Offset) :-
 
@@ -329,13 +373,17 @@ http_output_stream(Request, Out) :-
  *
  */
 tus_dispatch(Request) :-
-    memberchk(method(Method),Request),
+    (   memberchk('X-HTTP-Method-Override'(Method), Request)
+    ->  true
+    ;   memberchk(method(Method),Request)),
     tus_dispatch(Method,Request).
 
 /**
  * tus_dispatch(+Mode, +Request) is semidet.
  *
  * Version of `tus_dispatch/1` which includes explicit mode.
+ * The `tus_dispatch/0` version is to be preferred for proper
+ * handling of 'X-HTTP-Method_Override'.
  *
  * @arg Mode One of: options, head, post, patch
  * @arg Request is the standard Request object from the http_server
@@ -377,8 +425,11 @@ tus_dispatch(post,Request) :-
                           ['Tus-Resumable'('1.0.0'),
                            'Location'(Endpoint)],
                           _Code)
-    ;   http_status_reply(created(Endpoint), Out,
+    ;   Status = expires(Expiry),
+        http_timestamp(Expiry, Expiry_Date),
+        http_status_reply(created(Endpoint), Out,
                           ['Tus-Resumable'('1.0.0'),
+                           'Upload-Expires'(Expiry_Date),
                            'Location'(Endpoint)],
                           _Code)).
 tus_dispatch(head,Request) :-
@@ -405,9 +456,12 @@ tus_dispatch(patch,Request) :-
     http_read_data(Request, Patch, []),
     tus_uri_resource(URI, Resource),
     patch_resource(Resource, Patch, Offset, Length, New_Offset),
+    resource_expiry(Resource, Expiry),
+    http_timestamp(Expiry, Expiry_Date),
     http_output_stream(Request, Out),
     http_status_reply(no_content, Out,
                       ['Tus-Resumable'('1.0.0'),
+                       'Upload-Expires'(Expiry_Date),
                        'Upload-Offset'(New_Offset)],
                       _Code).
 
@@ -439,6 +493,9 @@ tus_options(Endpoint, Options) :-
     tus_process_options(Pre_Options, Options).
 
 tus_create(Endpoint, File, Length, Resource) :-
+    tus_create(Endpoint, File, Length, Resource, _).
+
+tus_create(Endpoint, File, Length, Resource, Reply_Header) :-
     size_file(File, Length),
     parse_upload_metadata(Metadata,filename(File,[])),
     http_get(Endpoint, _, [
@@ -454,6 +511,9 @@ tus_create(Endpoint, File, Length, Resource) :-
     ;   memberchk(location(Resource), Reply_Header)).
 
 tus_patch(Endpoint, File, Chunk, Position) :-
+    tus_patch(Endpoint, File, Chunk, Position, _Reply_Header).
+
+tus_patch(Endpoint, File, Chunk, Position, Reply_Header) :-
     setup_call_cleanup(
         open(File, read, Stream),
         (   seek(Stream, Position, bof, _),
@@ -464,6 +524,7 @@ tus_patch(Endpoint, File, Chunk, Position) :-
                          request_header('Content-Length'=Chunk),
                          request_header('Upload-Offset'=Position),
                          request_header('Tus-Resumable'='1.0.0'),
+                         reply_header(Reply_Header),
                          status_code(204)
                      ])
         ),
@@ -508,7 +569,7 @@ spawn_server(URL, Port) :-
 kill_server(Port) :-
     http_stop_server(Port,[]).
 
-test(parse_upload_metadata, [
+test(send_file, [
          setup((spawn_server(URL, Port),
                 set_tus_options([tus_client_chunk_size(4)]))),
          cleanup(kill_server(Port))
@@ -528,5 +589,31 @@ test(parse_upload_metadata, [
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
+
+test(check_expiry, [
+         setup((spawn_server(URL, Port),
+                set_tus_options([tus_client_chunk_size(4)]))),
+         cleanup(kill_server(Port))
+     ]) :-
+
+    File = 'example.txt',
+    tmp_file(File, Example),
+    open(Example, write, Stream),
+    Content = "asdf fdsa yes yes yes",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+
+    tus_options(URL, Options),
+    tus_create(URL, Example, Length, Resource, Reply_Header_Create),
+    % TODO: This should actually parse as RFC7231
+    %       and check the date is in the future.
+    memberchk(upload_expires(_Date_String),
+              Reply_Header_Create),
+
+    sub_string(Content, 0, 4, _, Chunk),
+    tus_patch(Resource, Example, 4, 0, Reply_Header_Patch),
+    memberchk(upload_expires(_Date_String),
+              Reply_Header_Patch).
+
 
 :- end_tests(tus).
