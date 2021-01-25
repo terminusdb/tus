@@ -435,18 +435,18 @@ tus_create(Endpoint, File, Length, Resource) :-
 
 tus_patch(Endpoint, File, Chunk, Position) :-
     setup_call_cleanup(
-        (   open(File, read, Stream),
-            seek(Stream, Position, bof, _),
-            read_string(Stream, Chunk, String)
+        open(File, read, Stream),
+        (   seek(Stream, Position, bof, _),
+            read_string(Stream, Chunk, String),
+            http_get(Endpoint, _, [
+                         method(patch),
+                         post(bytes('application/offset+octet-stream', String)),
+                         request_header('Content-Length'=Chunk),
+                         request_header('Upload-Offset'=Position),
+                         request_header('Tus-Resumable'='1.0.0'),
+                         status_code(204)
+                     ])
         ),
-        http_get(Endpoint, _, [
-                     method(patch),
-                     post(bytes('application/offset+octet-stream', String)),
-                     request_header('Content-Length'=Chunk),
-                     request_header('Upload-Offset'=Position),
-                     request_header('Tus-Resumable'='1.0.0'),
-                     status_code(204)
-                 ]),
         close(Stream)
     ).
 
