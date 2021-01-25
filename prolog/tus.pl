@@ -472,8 +472,9 @@ tus_dispatch(patch,Request) :-
     (   resource_expiry(Resource, Expiry)
     ->  http_timestamp(Expiry, Expiry_Date),
         (   get_time(Time),
+            debug(tus, "Time: ~q Expiry: ~q~n", [Time, Expiry]),
             Time > Expiry
-        ->  http_status_reply(not_found(URI), Out,
+        ->  http_status_reply(gone, Out,
                               % This should be `gone`, not `not_found`
                               ['Tus-Resumable'('1.0.0'),
                                'Upload-Expires'(Expiry_Date)],
@@ -654,26 +655,12 @@ test(test_expired_reinitiated, [
     close(Stream),
 
     tus_create(URL, Example, _Length, Resource),
-    tus_patch(Resource, Example, 4, 0),
     sleep(1),
 
-    setup_call_cleanup(
-        open(Example, read, Stream2),
-        (   seek(Stream2, 4, bof, _),
-            read_string(Stream2, 4, String),
-            http_get(URL, _, [
-                         method(patch),
-                         post(bytes('application/offset+octet-stream', String)),
-                         request_header('Content-Length'=4),
-                         request_header('Upload-Offset'=4),
-                         request_header('Tus-Resumable'='1.0.0'),
-                         reply_header(_),
-                         status_code(Status)
-                     ])
-        ),
-        close(Stream2)
-    ),
-
-    memberchk(Status, [404,410]).
+    catch(
+        tus_patch(Resource, Example, 4, 0),
+        error(existence_error(url,_URL),
+              context(_,status(Status,_))),
+        member(Status, [404, 410])).
 
 :- end_tests(tus).
