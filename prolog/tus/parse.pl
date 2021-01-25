@@ -1,9 +1,8 @@
-:- module(tus_parse, [
+:- module(parse, [
               parse_upload_metadata/2
           ]).
 
 /* parsing */
-%:- use_module(library(dcg/basics)).
 
 char_from_range(H,First,Last,[H|T],T) :-
 	H >= First, H =< Last.

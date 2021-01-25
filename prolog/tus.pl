@@ -1,7 +1,9 @@
-:- module(tus, [set_tus_options/1,         % +Options
+:- module(tus, [set_tus_options/1,          % +Options
                 tus_dispatch/1,             % +Request
                 tus_dispatch/2,             % +Method, +Request
-                tus_upload/3                % +File, +Endpoint_URI, +Resource_URI
+                tus_upload/3,               % +File, +Endpoint_URI, +Resource_URI
+                tus_uri_resource/2,         % +URI, -Resource
+                tus_resource_path/2         % +Resource, -Path
                ]).
 
 /** <module> TUS Protocol
@@ -40,7 +42,8 @@
 :- use_module(library(http/thread_httpd)).
 
 /* parsing tools */
-:- use_module(tus/tus_parse).
+:- use_module(tus/parse).
+:- use_module(tus/utilities).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
@@ -97,7 +100,14 @@ tus_client_chunk_size(Size) :-
     !.
 tus_client_chunk_size(16_777_216).
 
-tus_extention_list('creation').
+tus_extension(creation).
+%tus_extension(expiration).
+
+tus_extension_list(Atom) :-
+    findall(Extension,
+            tus_extension(Extension),
+            Extensions),
+    comma_list(Atom, Extensions).
 
 tus_storage_path(Path) :-
     tus_storage_path_dynamic(Path),
@@ -112,8 +122,6 @@ tus_storage_path(Temp) :-
     make_directory(Temp),
     assertz(tus_storage_path_dynamic(Temp)).
 
-tus_extension_list('creation').
-
 accept_tus_version(Version) :-
     member(Version, ['1.0.0']).
 
@@ -123,6 +131,13 @@ File store manipulation utilities.
 tus_resource_name(File, Name) :-
     md5_hash(File, Name, []).
 
+/**
+ * tus_resource_path(+Resource, -Path) is det.
+ *
+ * (Server) Return a fully qualified path for the
+ * given resource (assuming fully uploaded).
+ *
+ */
 tus_resource_path(File, Path) :-
     tus_storage_path(Storage),
     atomic_list_concat([Storage, '/', File], Path).
@@ -268,7 +283,12 @@ chunk_directive(Length, Chunk_Size, Directive) :-
     chunk_directive_(Length, Chunk_Size, Reversed),
     reverse(Reversed, Directive).
 
-uri_resource(URI, Resource) :-
+/**
+ * tus_uri_resource(+Uri, -Resource) is det.
+ *
+ * Return a resource descriptor from the given URI endpoint
+ */
+tus_uri_resource(URI, Resource) :-
     split_string(URI, '/', '', List),
     last(List, Resource).
 
@@ -365,7 +385,7 @@ tus_dispatch(head,Request) :-
     % Next stage.
     !,
     memberchk(request_uri(URI), Request),
-    uri_resource(URI, Resource),
+    tus_uri_resource(URI, Resource),
     resource_offset(Resource, Offset),
     http_output_stream(Request, Out),
     http_status_reply(ok, Out,
@@ -383,7 +403,7 @@ tus_dispatch(patch,Request) :-
     atom_number(Offset_Atom, Offset),
 
     http_read_data(Request, Patch, []),
-    uri_resource(URI, Resource),
+    tus_uri_resource(URI, Resource),
     patch_resource(Resource, Patch, Offset, Length, New_Offset),
     http_output_stream(Request, Out),
     http_status_reply(no_content, Out,

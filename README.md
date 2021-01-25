@@ -23,7 +23,7 @@ as follows:
 
 In order to determine the location of a given resource when passed the
 resource URL in other contexts you can use the utility predicate
-`uri_resource(URI, Resource)` together with
+`tus_uri_resource(URI, Resource)` together with
 `tus_resource_path(Resource, Resource_Path)`. In this way once a
 client has uploaded a resource it can be referred to in client-server
 communications, and be moved, modified or manipulated by server code.
