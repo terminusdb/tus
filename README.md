@@ -51,6 +51,7 @@ The remaining extensions would be desirable:
 
 * Checksum
 * Concatenation
+* Termination
 
 ## Copyright
 
