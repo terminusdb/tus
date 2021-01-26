@@ -2,7 +2,7 @@
 # TUS in swipl
 
 TUS protocol for resumable file uploads via HTTP in swipl (see:
-https://tus.io/)
+[TUS](https://tus.io/))
 
 This package implements both the server handlers and a simple client.
 
