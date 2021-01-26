@@ -27,6 +27,12 @@ size in bytes. Defaults to `17_179_869_184` bytes.
   seconds before the resource expires. This will allow resources which
   are not fully uploaded to be removed.
 
+For instance, to set a larger client chunk size one can call:
+
+```prolog
+:- set_tus_options([tus_client_chunk_size(33_554_432)]).
+```
+
 ## Examples
 
 ### Server
