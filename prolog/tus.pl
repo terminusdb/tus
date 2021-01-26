@@ -65,7 +65,7 @@ verify_options([H|T], Pred) :-
  * * tus_storage_path(Path): Location of server storage folder.
  * * tus_max_size(Size): Maximum chunk size accepted by the server.
  * * tus_client_chunk_size(Size)): Size of chunks to be sent to the server.
- *
+ * * tus_expiry(Expires): Expires after `Expires` seconds.
  */
 set_tus_options(Options) :-
     retract_tus_dynamics,
@@ -131,12 +131,14 @@ tus_storage_path(Path) :-
     !.
 tus_storage_path(Path) :-
     current_prolog_flag(tus_options, Options),
-    memberchk(tus_storage_path(Path), Options),
+    memberchk(tus_storage_path(Pre_Path), Options),
+    terminal_slash(Pre_Path, Path),
     assertz(tus_storage_path_dynamic(Path)),
     !.
 tus_storage_path(Temp) :-
-    tmp_file('tus_storage', Temp),
-    make_directory(Temp),
+    tmp_file('tus_storage', Temp_File),
+    make_directory(Temp_File),
+    terminal_slash(Temp_File,Temp),
     assertz(tus_storage_path_dynamic(Temp)).
 
 accept_tus_version(Version) :-
@@ -162,7 +164,7 @@ tus_resource_name(File, Name) :-
  */
 tus_resource_path(File, Path) :-
     tus_storage_path(Storage),
-    atomic_list_concat([Storage, '/', File], Path).
+    atomic_list_concat([Storage, File], Path).
 
 tus_offset_suffix('offset').
 
@@ -593,8 +595,8 @@ kill_server(Port) :-
     http_stop_server(Port,[]).
 
 test(send_file, [
-         setup((spawn_server(URL, Port),
-                set_tus_options([tus_client_chunk_size(4)]))),
+         setup((set_tus_options([tus_client_chunk_size(4)]),
+                spawn_server(URL, Port))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -614,8 +616,8 @@ test(send_file, [
     Result = Content.
 
 test(check_expiry, [
-         setup((spawn_server(URL, Port),
-                set_tus_options([tus_client_chunk_size(4)]))),
+         setup((set_tus_options([tus_client_chunk_size(4)]),
+                spawn_server(URL, Port))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -638,10 +640,10 @@ test(check_expiry, [
 
 
 test(test_expired_reinitiated, [
-         setup((spawn_server(URL, Port),
-                set_tus_options([tus_client_chunk_size(4),
+         setup((set_tus_options([tus_client_chunk_size(4),
                                  tus_expiry_seconds(1)
-                                ]))),
+                                ]),
+                spawn_server(URL, Port))),
          cleanup(kill_server(Port))
      ]) :-
 
