@@ -28,8 +28,6 @@
 
 */
 
-*/
-
 :- use_module(library(http/http_server_files)).
 :- use_module(library(http/http_dispatch)).
 :- use_module(library(http/html_write)).
@@ -93,7 +91,9 @@ tus_default_options(
 
 tus_merged_options(Options) :-
     tus_default_options(Defaults),
-    current_prolog_flag(tus_options, User),
+    (   current_prolog_flag(tus_options, User)
+    ->  true
+    ;   User = []),
     merge_options(User, Defaults, Options).
 
 get_tus_option(Option) :-
@@ -299,7 +299,7 @@ patch_resource(Name, Patch, Offset, Length, New_Offset) :-
         ),
         (   setup_call_cleanup(
                 (   tus_upload_path(Name, Upload_Path),
-                    open(Upload_Path, update, UP)
+                    open(Upload_Path, update, UP, [encoding(octet)])
                 ),
                 (   seek(UP, Offset, bof, _),
                     format(UP, "~s", [Patch]),
@@ -540,13 +540,12 @@ tus_patch(Endpoint, File, Chunk, Position) :-
 
 tus_patch(Endpoint, File, Chunk, Position, Reply_Header) :-
     setup_call_cleanup(
-        open(File, read, Stream),
+        open(File, read, Stream, [encoding(octet)]),
         (   seek(Stream, Position, bof, _),
             read_string(Stream, Chunk, String),
             http_get(Endpoint, _, [
                          method(patch),
                          post(bytes('application/offset+octet-stream', String)),
-                         request_header('Content-Length'=Chunk),
                          request_header('Upload-Offset'=Position),
                          request_header('Tus-Resumable'='1.0.0'),
                          reply_header(Reply_Header),
@@ -569,7 +568,6 @@ tus_patch(Endpoint, File, Chunk, Position, Reply_Header) :-
 tus_upload(File, Endpoint, Resource) :-
     tus_options(Endpoint, Options),
     tus_create(Endpoint, File, Length, Resource),
-
     tus_client_effective_chunk_size(Options, Chunk_Size),
     chunk_directive(Length, Chunk_Size, Directive),
 
