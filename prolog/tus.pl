@@ -474,7 +474,7 @@ tus_dispatch(patch,Request) :-
         (   get_time(Time),
             debug(tus, "Time: ~q Expiry: ~q~n", [Time, Expiry]),
             Time > Expiry
-        ->  http_status_reply(gone, Out,
+        ->  http_status_reply(not_found(URI), Out,
                               % This should be `gone`, not `not_found`
                               ['Tus-Resumable'('1.0.0'),
                                'Upload-Expires'(Expiry_Date)],

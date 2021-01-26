@@ -15,7 +15,7 @@ The package implements the core protocol along with two extensions:
 
 ### Server
 
-To use the tus server with the HTTP library in swipl you can simply
+To use the TUS server with the HTTP library in swipl you can simply
 add a `tus_dispatch` call to your http_handler from a chosen endpoint
 as follows:
 
@@ -36,7 +36,7 @@ communications, and be moved, modified or manipulated by server code.
 ### Client
 
 The client invocation requires only the endpoint of interest and a
-file and can be envoked thus:
+file and can be invoked thus:
 
 ```prolog
 tus_upload(Example, URL, _Resource)
