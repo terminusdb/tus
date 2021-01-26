@@ -39,11 +39,11 @@ The client invocation requires only the endpoint of interest and a
 file and can be invoked thus:
 
 ```prolog
-tus_upload(Example, URL, _Resource)
+tus_upload(Example, URL, Resource)
 ```
 
-The resource gives back a resource handle that the server can use to
-manipulate files on the remote end.
+The `Resource` variable gives back a resource handle that the server can use to
+refer to the resource in subsequent communication.
 
 ## TODO
 
