@@ -11,6 +11,22 @@ The package implements the core protocol along with two extensions:
 * Creation
 * Expiration
 
+# Options
+
+Options for the server can be set with the `set_tus_options/1`
+predicate which has the following options:
+
+* `tus_storage_path(Path)`: The `Path` contains the location of the
+storage folder to be used for uploads. If not set it will default to a
+temporary directory.
+* `tus_max_size(Size)`: The `Size` is the maximum allowable upload
+size in bytes. Defaults to `17_179_869_184` bytes.
+* `tus_client_chunk_size(Size)`: The `Size` is the size of chunks to
+  be uploaded. The default is `16_777_216` bytes.
+* `tus_expiry_seconds(Seconds)`: The `Seconds` is the total number of
+  seconds before the resource expires. This will allow resources which
+  are not fully uploaded to be removed.
+
 ## Examples
 
 ### Server
