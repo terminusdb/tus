@@ -663,18 +663,12 @@ tus_resume(File, Endpoint, Resource_URL) :-
 /* Tests */
 
 :- begin_tests(tus).
-
 spawn_server(URL, Port) :-
     random_between(49152, 65535, Port),
-    http_server(http_dispatch, [port(Port), workers(1)]),
-    http_handler(root(files), tus_dispatch,
-                 [ methods([options,head,post,patch]),
-                   prefix
-                 ]),
+    http_server(tus_dispatch, [port(Port), workers(1)]),
     format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
 
 kill_server(Port) :-
-    http_delete_handler(root(files)),
     http_stop_server(Port,[]).
 
 test(send_file, [
@@ -794,11 +788,7 @@ auth_wrapper(Goal,Request) :-
 
 spawn_auth_server(URL, Port) :-
     random_between(49152, 65535, Port),
-    http_server(http_dispatch, [port(Port), workers(1)]),
-    http_handler(root(files), auth_wrapper(tus_dispatch),
-                 [ methods([options,head,post,patch]),
-                   prefix
-                 ]),
+    http_server(auth_wrapper(tus_dispatch), [port(Port), workers(1)]),
     format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
 
 test(auth_test, [
@@ -823,6 +813,5 @@ test(auth_test, [
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
-
 
 :- end_tests(tus).
