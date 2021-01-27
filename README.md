@@ -55,6 +55,37 @@ resource URL in other contexts you can use the utility predicate
 client has uploaded a resource it can be referred to in client-server
 communications, and be moved, modified or manipulated by server code.
 
+### Domains and Authorization in Server
+
+The server does not manage authorization, but it is possible to use
+authorization to provide isolation of user data by providing the
+`tus_dispatch/2` predicate with options which include
+`[domain(Domain)]`.
+
+You can use any authorization system you'd like (basic, JWT etc.) to
+guard access to this domain token and the domain token will be used to
+ensure isolation.
+
+The following code shows how you might add a handler which carries
+with it a domain after authorization. There is a more complete example
+in the tests in [prolog/tus.pl](prolog/tus.pl).
+
+```prolog
+:- meta_predicate auth_wrapper(2,?).
+auth_wrapper(Goal,Request) :-
+    authorize(Request, Domain),
+    call(Goal, [domain(Domain)], Request).
+
+spawn_auth_server(URL, Port) :-
+    random_between(49152, 65535, Port),
+    http_server(http_dispatch, [port(Port), workers(1)]),
+    http_handler(root(files), auth_wrapper(tus_dispatch),
+                 [ methods([options,head,post,patch]),
+                   prefix
+                 ]),
+    format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
+```
+
 ### Client
 
 The client invocation requires only the endpoint of interest and a
