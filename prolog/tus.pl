@@ -132,16 +132,19 @@ tus_extension_list(Atom) :-
             Extensions),
     comma_list(Atom, Extensions).
 
-tus_storage_path(Path) :-
+tus_storage_path(Path, Options) :-
+    memberchk(tus_storage_path(Path), Options),
+    !.
+tus_storage_path(Path, _Options) :-
     tus_storage_path_dynamic(Path),
     !.
-tus_storage_path(Path) :-
+tus_storage_path(Path, _Options) :-
     current_prolog_flag(tus_options, Options),
     memberchk(tus_storage_path(Pre_Path), Options),
     terminal_slash(Pre_Path, Path),
     assertz(tus_storage_path_dynamic(Path)),
     !.
-tus_storage_path(Temp) :-
+tus_storage_path(Temp, _Options) :-
     random_file('tus_storage', Temp_File),
     make_directory(Temp_File),
     terminal_slash(Temp_File,Temp),
@@ -174,7 +177,7 @@ tus_resource_name(File, Name) :-
  *
  */
 tus_resource_path(Resource, Path, Options) :-
-    tus_storage_path(Storage),
+    tus_storage_path(Storage, Options),
     option(domain(Domain),Options,'xanadu'),
     atomic_list_concat([Storage, Domain, '.', Resource], Path).
 
@@ -665,9 +668,9 @@ tus_resume(File, Endpoint, Resource_URL) :-
 :- begin_tests(tus).
 
 
-spawn_server(URL, Port) :-
+spawn_server(URL, Port, Options) :-
     random_between(49152, 65535, Port),
-    http_server(tus_dispatch, [port(Port), workers(1)]),
+    http_server(tus_dispatch(Options), [port(Port), workers(1)]),
     format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
 
 kill_server(Port) :-
@@ -675,7 +678,9 @@ kill_server(Port) :-
 
 test(send_file, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
-                spawn_server(URL, Port))),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -688,14 +693,16 @@ test(send_file, [
     tus_upload(File, URL, _Resource),
 
     tus_resource_name(File, Name),
-    tus_resource_path(Name, Resource, []),
+    tus_resource_path(Name, Resource, Options),
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
 
 test(check_expiry, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
-                spawn_server(URL, Port))),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -720,7 +727,9 @@ test(expired_reinitiated, [
          setup((set_tus_options([tus_client_chunk_size(4),
                                  tus_expiry_seconds(1)
                                 ]),
-                spawn_server(URL, Port))),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -740,7 +749,9 @@ test(expired_reinitiated, [
 
 test(resume, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
-                spawn_server(URL, Port))),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -756,7 +767,7 @@ test(resume, [
     tus_resume(File, URL, Resource_URL),
 
     tus_resource_name(File, Name),
-    tus_resource_path(Name, Resource, []),
+    tus_resource_path(Name, Resource, Options),
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
@@ -779,21 +790,23 @@ authorize(Request,Organization) :-
     atom_codes(Key,Key_Codes),
     auth_table(Username, Key, Organization).
 
-:- meta_predicate auth_wrapper(2,?).
-auth_wrapper(Goal,Request) :-
+:- meta_predicate auth_wrapper(2,+,+).
+auth_wrapper(Goal,Options,Request) :-
     authorize(Request, Domain),
-    call(Goal, [domain(Domain)], Request).
+    call(Goal, [domain(Domain) | Options], Request).
 
-spawn_auth_server(URL, Port) :-
+spawn_auth_server(URL, Port, Options) :-
     random_between(49152, 65535, Port),
-    http_server(auth_wrapper(tus_dispatch), [port(Port), workers(1)]),
+    http_server(auth_wrapper(tus_dispatch, Options), [port(Port), workers(1)]),
     format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).
 
 test(auth_test, [
          setup((set_tus_options([tus_client_chunk_size(4),
                                  tus_expiry_seconds(1)
                                 ]),
-                spawn_auth_server(URL, Port))),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_auth_server(URL, Port, [tus_storage_path(Path)]))),
          cleanup(kill_server(Port))
      ]) :-
 
@@ -806,7 +819,7 @@ test(auth_test, [
     tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]),
 
     tus_resource_name(File, Name),
-    tus_resource_path(Name, Resource, [domain(shangrila)]),
+    tus_resource_path(Name, Resource, [domain(shangrila) | Options]),
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
