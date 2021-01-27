@@ -142,7 +142,7 @@ tus_storage_path(Path) :-
     assertz(tus_storage_path_dynamic(Path)),
     !.
 tus_storage_path(Temp) :-
-    tmp_file('tus_storage', Temp_File),
+    random_file('tus_storage', Temp_File),
     make_directory(Temp_File),
     terminal_slash(Temp_File,Temp),
     assertz(tus_storage_path_dynamic(Temp)).
@@ -663,6 +663,8 @@ tus_resume(File, Endpoint, Resource_URL) :-
 /* Tests */
 
 :- begin_tests(tus).
+
+
 spawn_server(URL, Port) :-
     random_between(49152, 65535, Port),
     http_server(tus_dispatch, [port(Port), workers(1)]),
@@ -677,16 +679,15 @@ test(send_file, [
          cleanup(kill_server(Port))
      ]) :-
 
-    File = 'example.txt',
-    tmp_file(File, Example),
-    open(Example, write, Stream),
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
     Content = "asdf fdsa yes yes yes",
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_upload(Example, URL, _Resource),
+    tus_upload(File, URL, _Resource),
 
-    tus_resource_name(Example, Name),
+    tus_resource_name(File, Name),
     tus_resource_path(Name, Resource, []),
     read_file_to_string(Resource, Result, []),
 
@@ -698,20 +699,19 @@ test(check_expiry, [
          cleanup(kill_server(Port))
      ]) :-
 
-    File = 'example.txt',
-    tmp_file(File, Example),
-    open(Example, write, Stream),
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
     Content = "asdf fdsa yes yes yes",
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_create(URL, Example, _Length, Resource, Reply_Header_Create, []),
+    tus_create(URL, File, _Length, Resource, Reply_Header_Create, []),
     % TODO: This should actually parse as RFC7231
     %       and check the date is in the future.
     memberchk(upload_expires(_Date_String1),
               Reply_Header_Create),
 
-    tus_patch(Resource, Example, 4, 0, Reply_Header_Patch, []),
+    tus_patch(Resource, File, 4, 0, Reply_Header_Patch, []),
     memberchk(upload_expires(_Date_String2),
               Reply_Header_Patch).
 
@@ -724,17 +724,16 @@ test(expired_reinitiated, [
          cleanup(kill_server(Port))
      ]) :-
 
-    File = 'example.txt',
-    tmp_file(File, Example),
-    open(Example, write, Stream),
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
     Content = "asdf fdsa yes yes yes",
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_create(URL, Example, _Length, Resource, _, []),
+    tus_create(URL, File, _Length, Resource, _, []),
     sleep(1),
     catch(
-        once(tus_patch(Resource, Example, 4, 0, [])),
+        once(tus_patch(Resource, File, 4, 0, [])),
         error(existence_error(url,_URL),
               context(_,status(Status,_))),
         memberchk(Status, [404, 410])).
@@ -745,19 +744,18 @@ test(resume, [
          cleanup(kill_server(Port))
      ]) :-
 
-    File = 'example.txt',
-    tmp_file(File, Example),
-    open(Example, write, Stream),
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
     Content = "asdf fdsa yes yes yes",
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_create(URL, Example, _Length, Resource_URL, _, []),
-    tus_patch(Resource_URL, Example, 4, 0, []),
+    tus_create(URL, File, _Length, Resource_URL, _, []),
+    tus_patch(Resource_URL, File, 4, 0, []),
 
-    tus_resume(Example, URL, Resource_URL),
+    tus_resume(File, URL, Resource_URL),
 
-    tus_resource_name(Example, Name),
+    tus_resource_name(File, Name),
     tus_resource_path(Name, Resource, []),
     read_file_to_string(Resource, Result, []),
 
@@ -799,16 +797,15 @@ test(auth_test, [
          cleanup(kill_server(Port))
      ]) :-
 
-    File = 'example.txt',
-    tmp_file(File, Example),
-    open(Example, write, Stream),
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
     Content = "asdf fdsa yes yes yes",
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_upload(Example, URL, _Resource, [authorization(basic(me,pass))]),
+    tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]),
 
-    tus_resource_name(Example, Name),
+    tus_resource_name(File, Name),
     tus_resource_path(Name, Resource, [domain(shangrila)]),
     read_file_to_string(Resource, Result, []),
 
