@@ -11,5 +11,5 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Run a one-line script
+      - name: Run tests in the swipl docker
         run: sudo docker run -v $(pwd):/app/tus terminusdb/swipl:latest swipl -g run_tests -g halt /app/tus/prolog/tus.pl
