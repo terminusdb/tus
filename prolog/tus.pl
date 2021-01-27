@@ -716,7 +716,7 @@ test(check_expiry, [
               Reply_Header_Patch).
 
 
-test(test_expired_reinitiated, [
+test(expired_reinitiated, [
          setup((set_tus_options([tus_client_chunk_size(4),
                                  tus_expiry_seconds(1)
                                 ]),
