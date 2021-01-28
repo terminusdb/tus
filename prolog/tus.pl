@@ -34,12 +34,6 @@
 
 */
 
-:- use_module(library(http/http_server_files)).
-:- use_module(library(http/http_dispatch)).
-:- use_module(library(http/html_write)).
-:- use_module(library(http/http_path)).
-:- use_module(library(http/html_head)).
-:- use_module(library(http/http_parameters)).
 :- use_module(library(http/http_client)).
 :- use_module(library(http/http_header)).
 :- use_module(library(http/thread_httpd)).
