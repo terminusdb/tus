@@ -1,21 +1,6 @@
 :- module(utilities, [
-              comma_list/2,
               random_file/2
           ]).
-
-intersperse(Item, List, Output) :-
-    (   List == []
-    ->  Output = []
-    ;   List = [X| Xs],
-        intersperse_(Xs, X, Item, Output)
-    ).
-
-intersperse_([], X, _, [X]).
-intersperse_([Y| Xs], X, Item, [X, Item| Tail]) :-
-    intersperse_(Xs, Y, Item, Tail).
-
-comma_list(Atom, List) :-
-    atomic_list_concat(List, ',', Atom).
 
 /**
  * random_string(String) is det.

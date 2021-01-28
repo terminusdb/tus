@@ -120,13 +120,14 @@ tus_expiry_seconds(Seconds) :-
 
 tus_extension(creation).
 tus_extension(expiration).
-tus_extention(checksum).
+tus_extension(checksum).
+tus_extension(termination).
 
 tus_extension_list(Atom) :-
     findall(Extension,
             tus_extension(Extension),
             Extensions),
-    comma_list(Atom, Extensions).
+    atomic_list_concat(Extensions, ',', Atom).
 
 tus_checksum_algorithm(md5).
 tus_checksum_algorithm(sha1).
@@ -135,10 +136,11 @@ tus_checksum_algorithm_list(Atom) :-
     findall(Extension,
             tus_checksum_algorithm(Extension),
             Extensions),
-    comma_list(Atom, Extensions).
+    atomic_list_concat(Extensions, ',', Atom).
 
 tus_storage_path(Path, Options) :-
-    memberchk(tus_storage_path(Path), Options),
+    memberchk(tus_storage_path(Pre_Path), Options),
+    terminal_slash(Pre_Path, Path),
     !.
 tus_storage_path(Path, _Options) :-
     tus_storage_path_dynamic(Path),
@@ -191,9 +193,8 @@ tus_algorithm_supported(Upload_Checksum) :-
 
 tus_generate_checksum_header(String, Header, Tus_Options) :-
     memberchk(tus_checksum_algorithm(Algorithms), Tus_Options),
-    comma_list(Algorithms, Algorithms_List),
     member(Algorithm, [sha1,md5]), % in this order of precedence
-    memberchk(Algorithm, Algorithms_List),
+    memberchk(Algorithm, Algorithms),
     !,
     algorithm_checksum_string_value(Algorithm, _, String, Upload_Checksum),
     Header = [request_header('Upload-Checksum'=Upload_Checksum)].
@@ -203,11 +204,26 @@ tus_generate_checksum_header(_, Header, _) :-
 % Should probably also be an option.
 tus_max_retries(3).
 
+check_tus_creation(Tus_Options) :-
+    memberchk(tus_extension(Extensions), Tus_Options),
+    memberchk(creation, Extensions).
+
+check_tus_termination(Tus_Options) :-
+    memberchk(tus_extension(Extensions), Tus_Options),
+    memberchk(termination, Extensions).
+
 /*
 File store manipulation utilities.
 */
 tus_resource_name(File, Name) :-
     md5_hash(File, Name, []).
+
+tus_resource_base_path(Resource, Path, Options) :-
+    tus_storage_path(Storage, Options),
+    option(domain(Domain),Options,'xanadu'),
+    atomic_list_concat([Storage, Domain, '.', Resource], Path).
+
+tus_resource_suffix('completed').
 
 /**
  * tus_resource_path(+Resource, -Path, +Options) is det.
@@ -222,44 +238,55 @@ tus_resource_name(File, Name) :-
  *
  */
 tus_resource_path(Resource, Path, Options) :-
-    tus_storage_path(Storage, Options),
-    option(domain(Domain),Options,'xanadu'),
-    atomic_list_concat([Storage, Domain, '.', Resource], Path).
+    tus_resource_base_path(Resource, Base_Path, Options),
+    tus_resource_suffix(Completed),
+    atomic_list_concat([Base_Path, '/',Completed], Path).
+
+tus_resource_deleted_path(Resource, Deleted_Path, Options) :-
+    tus_resource_base_path(Resource, Path, Options),
+    atomic_list_concat([Path, '.deleted'], Deleted_Path).
 
 tus_offset_suffix('offset').
 
 tus_offset_path(Resource, Path, Options) :-
-    tus_resource_path(Resource, RPath, Options),
+    tus_resource_base_path(Resource, RPath, Options),
     tus_offset_suffix(Offset),
-    atomic_list_concat([RPath, '.', Offset], Path).
+    atomic_list_concat([RPath, '/', Offset], Path).
 
 tus_size_suffix('size').
 
 tus_size_path(Resource, Path, Options) :-
-    tus_resource_path(Resource, RPath, Options),
+    tus_resource_base_path(Resource, RPath, Options),
     tus_size_suffix(Size),
-    atomic_list_concat([RPath, '.', Size], Path).
+    atomic_list_concat([RPath, '/', Size], Path).
 
 tus_upload_suffix('upload').
 
 tus_upload_path(Resource, Path, Options) :-
-    tus_resource_path(Resource, RPath, Options),
+    tus_resource_base_path(Resource, RPath, Options),
     tus_upload_suffix(Upload),
-    atomic_list_concat([RPath, '.', Upload], Path).
+    atomic_list_concat([RPath, '/', Upload], Path).
 
 tus_lock_suffix('lock').
 
 tus_lock_path(Resource, Path, Options) :-
-    tus_resource_path(Resource, RPath, Options),
+    tus_resource_base_path(Resource, RPath, Options),
     tus_lock_suffix(Lock),
-    atomic_list_concat([RPath, '.', Lock], Path).
+    atomic_list_concat([RPath, '/', Lock], Path).
 
 tus_expiry_suffix('expiry').
 
 tus_expiry_path(Resource, Path, Options) :-
-    tus_resource_path(Resource, RPath, Options),
+    tus_resource_base_path(Resource, RPath, Options),
     tus_expiry_suffix(Offset),
-    atomic_list_concat([RPath, '.', Offset], Path).
+    atomic_list_concat([RPath, '/', Offset], Path).
+
+% turns exception into failure.
+try_make_directory(Directory) :-
+    catch(
+        make_directory(Directory),
+        error(existence_error(directory,_),_),
+        fail).
 
 :- meta_predicate fail_on_missing_file(0).
 fail_on_missing_file(Goal) :-
@@ -313,39 +340,36 @@ set_resource_expiry(Resource, Size, Options) :-
     ).
 
 % member(Status, [exists, expires(Expiry)])
-create_file_resource(File, _, Name, Status, Options) :-
-    tus_resource_name(File, Name),
-    tus_resource_path(Name, Resource_Path, Options),
-    exists_file(Resource_Path),
-    !,
-    Status=exists.
 create_file_resource(File, Size, Name, Status, Options) :-
     tus_resource_name(File, Name),
-
-    % File
-    setup_call_cleanup(
-        (   tus_lock_path(Name, Lock_Path, Options),
-            open(Lock_Path, write, LP, [lock(exclusive)]) % Get an exclusive lock
-        ),
+    tus_resource_base_path(Name, Path, Options),
+    (   try_make_directory(Path)
+    ->  % File
         setup_call_cleanup(
-            (   tus_upload_path(Name,File_Path, Options),
-                open(File_Path, write, FP)
+            (   tus_lock_path(Name, Lock_Path, Options),
+                open(Lock_Path, write, LP, [lock(exclusive)]) % Get an exclusive lock
             ),
-            (   % Size
-                set_resource_size(Name, Size, Options),
+            setup_call_cleanup(
+                (   tus_upload_path(Name,File_Path, Options),
+                    open(File_Path, write, FP)
+                ),
+                (   % Size
+                    set_resource_size(Name, Size, Options),
 
-                % Offset
-                set_resource_offset(Name, 0, Options),
+                    % Offset
+                    set_resource_offset(Name, 0, Options),
 
-                % Expires
-                expiration_timestamp(Expiry),
-                set_resource_expiry(Name, Expiry, Options)
+                    % Expires
+                    expiration_timestamp(Expiry),
+                    set_resource_expiry(Name, Expiry, Options)
+                ),
+                close(FP)
             ),
-            close(FP)
+            close(LP)
         ),
-        close(LP)
-    ),
-    Status=expires(Expiry).
+        Status=expires(Expiry)
+    ;   Status=exists
+    ).
 
 patch_resource(Name, Patch, Offset, Length, New_Offset, Options) :-
 
@@ -384,6 +408,17 @@ patch_resource(Name, Patch, Offset, Length, New_Offset, Options) :-
         close(LP)
     ).
 
+delete_resource(Resource, Options) :-
+    tus_resource_base_path(Resource, Path, Options),
+    tus_resource_deleted_path(Resource, Deleted, Options),
+    rename_file(Path, Deleted),
+    directory_files(Deleted, All_Files),
+    exclude([X]>>(member(X,['.', '..'])), All_Files, Files),
+    forall(
+        member(File, Files),
+        (   atomic_list_concat([Deleted, '/', File],Full_Path),
+            delete_file(Full_Path))),
+    delete_directory(Deleted).
 
 tus_client_effective_chunk_size(Options, Chunk) :-
     memberchk(tus_max_size(Max), Options),
@@ -459,10 +494,12 @@ custom_status_reply(Custom_Response, Out, Headers) :-
     format_headers(Out,Headers),
     format(Out,"\r\n",[]).
 
+status_code(created,201).
 status_code(no_content,204).
 status_code(bad_request,400).
 status_code(forbidden,403).
 status_code(not_found,404).
+status_code(conflict,409).
 status_code(gone,410).
 status_code(unsupported_media,415).
 status_code(bad_checksum,460).
@@ -562,7 +599,7 @@ tus_dispatch(post,Options,Request) :-
                            'Location'(Endpoint)],
                           _Code)).
 tus_dispatch(head,Options,Request) :-
-    % Next stage.
+    % Find position
     !,
     memberchk(request_uri(URI), Request),
     tus_uri_resource(URI, Resource),
@@ -580,7 +617,7 @@ tus_dispatch(head,Options,Request) :-
                           _Code)
     ).
 tus_dispatch(patch,Options,Request) :-
-    % Next stage.
+    % Patch next bit
     !,
     memberchk(request_uri(URI),Request),
     memberchk(content_length(Length),Request),
@@ -624,6 +661,22 @@ tus_dispatch(patch,Options,Request) :-
                               _Code)
         )
     ).
+tus_dispatch(delete,Options,Request) :-
+    % Delete
+    memberchk(request_uri(URI),Request),
+
+    tus_uri_resource(URI, Resource),
+
+    http_output_stream(Request, Out),
+
+    (   delete_resource(Resource, Options)
+    ->  http_status_reply(no_content, Out,
+                          ['Tus-Resumable'('1.0.0')],
+                          _Code)
+    ;   http_status_reply(not_found(URI), Out,
+                              ['Tus-Resumable'('1.0.0')],
+                              _Code)
+    ).
 
 /*
  Client implementation
@@ -631,10 +684,13 @@ tus_dispatch(patch,Options,Request) :-
 */
 
 tus_process_options([], []).
-tus_process_options([tus_extention(X)|Rest_In],[tus_extention(Y)|Rest_Out]) :-
+tus_process_options([tus_checksum_algorithm(X)|Rest_In],[tus_checksum_algorithm(Y)|Rest_Out]) :-
     !,
-    split_string(X, ',', '', List),
-    maplist(atom_string, Y, List),
+    atomic_list_concat(Y, ',', X),
+    tus_process_options(Rest_In, Rest_Out).
+tus_process_options([tus_extension(X)|Rest_In],[tus_extension(Y)|Rest_Out]) :-
+    !,
+    atomic_list_concat(Y, ',', X),
     tus_process_options(Rest_In, Rest_Out).
 tus_process_options([tus_max_size(X)|Rest_In],[tus_max_size(Y)|Rest_Out]) :-
     !,
@@ -652,24 +708,33 @@ tus_options(Endpoint, Tus_Options, Options) :-
              ]),
     tus_process_options(Pre_Options, Tus_Options).
 
-tus_create(Endpoint, File, Length, Resource, Options) :-
-    tus_create(Endpoint, File, Length, Resource, _, Options).
+tus_create(Endpoint, File, Length, Resource, Tus_Options, Options) :-
+    tus_create(Endpoint, File, Length, Resource, _, Tus_Options, Options).
 
-tus_create(Endpoint, File, Length, Resource, Reply_Header, Options) :-
+tus_create(Endpoint, File, Length, Resource, Reply_Header, Tus_Options, Options) :-
+    (   check_tus_creation(Tus_Options)
+    ->  true
+    ;   throw(error(no_creation_extention(Endpoint), _))),
+
     size_file(File, Length),
     parse_upload_metadata(Metadata,filename(File,[])),
-    http_get(Endpoint, _, [
+    http_get(Endpoint, Response, [
                  method(post),
                  request_header('Upload-Length'=Length),
                  request_header('Upload-Metadata'=Metadata),
                  request_header('Tus-Resumable'='1.0.0'),
                  reply_header(Reply_Header),
-                 status_code(Status)
+                 status_code(Code)
                  |Options
              ]),
-    (   Status = 409
-    ->  throw(error(file_already_exists(File), _))
-    ;   memberchk(location(Resource), Reply_Header)).
+    (   status_code(Status,Code)
+    ->  (   Status = created
+        ->  memberchk(location(Resource), Reply_Header)
+        ;   Status = conflict % file already exists
+        ->  throw(error(file_already_exists(File), _))
+        ;   throw(error(unhandled_status_code(Code,Response),_)))
+    ;   throw(error(unhandled_status_code(Code,Response),_))
+    ).
 
 tus_patch(Endpoint, File, Chunk, Position, Tus_Options, Options) :-
     tus_patch(Endpoint, File, Chunk, Position, _Reply_Header, Tus_Options, Options).
@@ -717,6 +782,7 @@ tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) 
         ->  throw(error(forbidden(Endpoint),_))
         ;   Status = unsupported_media
         ->  throw(error(unsupported_media,_))
+        ;   throw(error(unhandled_status_code(Code,Response),_))
         )
     ;   throw(error(unhandled_status_code(Code,Response),_))
     ).
@@ -739,6 +805,33 @@ tus_head(Resource_URL, Offset, Length, Reply_Header, Options) :-
     ;   Length = unknown
     ).
 
+tus_delete(Resource_URL, Tus_Options, Options) :-
+    tus_delete(Resource_URL, _Reply_Header, Tus_Options, Options).
+
+tus_delete(Resource_URL, Reply_Header, Tus_Options, Options) :-
+    (   check_tus_termination(Tus_Options)
+    ->  true
+    ;   throw(error(no_termination_extention(Resource_URL), _))),
+
+    http_get(Resource_URL, Response, [
+                 method(delete),
+                 request_header('Tus-Resumable'='1.0.0'),
+                 reply_header(Reply_Header),
+                 status_code(Code)
+                 |Options
+             ]),
+    (   status_code(Status, Code)
+    ->  (   Status = no_content % deleted
+        ->  true
+        ;   memberchk(Status, [not_found, gone])
+        ->  throw(error(resource_does_not_exist(Resource_URL), _))
+        ;   Status = forbidden
+        ->  throw(error(forbidden(Resource_URL),_))
+        ;   throw(error(unhandled_status_code(Code,Response),_))
+        )
+    ;   throw(error(unhandled_status_code(Code,Response),_))
+    ).
+
 /**
  * tus_upload(+File, +Endpoint, -Resource_URL, +Options) is semidet.
  *
@@ -751,7 +844,7 @@ tus_head(Resource_URL, Offset, Length, Reply_Header, Options) :-
  */
 tus_upload(File, Endpoint, Resource_URL, Options) :-
     tus_options(Endpoint, Tus_Options, Options),
-    tus_create(Endpoint, File, Length, Resource_URL, Options),
+    tus_create(Endpoint, File, Length, Resource_URL, Tus_Options, Options),
     tus_client_effective_chunk_size(Tus_Options, Chunk_Size),
     forall(
         chunk_directive(Length, Chunk_Size, Position, Chunk),
@@ -803,6 +896,7 @@ kill_server(Port) :-
 test(send_file, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
@@ -822,9 +916,36 @@ test(send_file, [
 
     Result = Content.
 
+test(send_and_delete_file, [
+         setup((set_tus_options([tus_client_chunk_size(4)]),
+                random_file(tus_storage_test, Path),
+                make_directory(Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
+         cleanup(kill_server(Port))
+     ]) :-
+
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
+    Content = "asdf fdsa yes yes yes",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+
+    tus_upload(File, URL, Resource),
+
+    tus_resource_name(File, Name),
+    tus_resource_path(Name, Resource_Path, Options),
+    read_file_to_string(Resource_Path, _Result, []),
+
+    tus_options(URL, Tus_Options, []),
+    tus_delete(Resource, Tus_Options, Options),
+    tus_resource_base_path(Resource, Base_Path, Options),
+    \+ exists_directory(Base_Path).
+
 test(check_expiry, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
@@ -852,6 +973,7 @@ test(expired_reinitiated, [
                                  tus_expiry_seconds(1)
                                 ]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port)),
@@ -869,10 +991,10 @@ test(expired_reinitiated, [
     sleep(1),
     tus_patch(Resource, File, 4, 0, Tus_Options, []).
 
-
 test(resume, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port))
@@ -899,6 +1021,7 @@ test(resume, [
 test(bad_checksum, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port)),
@@ -919,6 +1042,7 @@ test(bad_checksum, [
 test(bad_checksum_algo, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
          cleanup(kill_server(Port)),
@@ -969,6 +1093,7 @@ test(auth_test, [
                                  tus_expiry_seconds(1)
                                 ]),
                 random_file(tus_storage_test, Path),
+                make_directory(Path),
                 Options = [tus_storage_path(Path)],
                 spawn_auth_server(URL, Port, [tus_storage_path(Path)]))),
          cleanup(kill_server(Port))
