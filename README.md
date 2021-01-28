@@ -44,7 +44,7 @@ as follows:
 
 ```prolog
 :- http_handler(root(files), tus_dispatch,
-                [ methods([options,head,post,patch]),
+                [ methods([options,head,post,patch,delete]),
                   prefix
                 ]).
 ```
@@ -81,7 +81,7 @@ spawn_auth_server(URL, Port) :-
     random_between(49152, 65535, Port),
     http_server(http_dispatch, [port(Port), workers(1)]),
     http_handler(root(files), auth_wrapper(tus_dispatch),
-                 [ methods([options,head,post,patch]),
+                 [ methods([options,head,post,patch,delete]),
                    prefix
                  ]),
     format(atom(URL), 'http://127.0.0.1:~d/files', [Port]).

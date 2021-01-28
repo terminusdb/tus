@@ -828,6 +828,7 @@ tus_delete(Resource_URL, Reply_Header, Tus_Options, Options) :-
                  status_code(Code)
                  |Options
              ]),
+
     (   status_code(Status, Code)
     ->  (   Status = no_content % deleted
         ->  true
