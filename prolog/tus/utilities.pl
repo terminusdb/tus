@@ -15,13 +15,7 @@ intersperse_([Y| Xs], X, Item, [X, Item| Tail]) :-
     intersperse_(Xs, Y, Item, Tail).
 
 comma_list(Atom, List) :-
-    var(Atom),
-    !,
-    intersperse(',', List, Interspersed),
-    atomic_list_concat(Interspersed, Atom).
-comma_list(Atom, List) :-
-    split_string(Atom, ',', '', List_Strings),
-    maplist(atom_string, List, List_Strings).
+    atomic_list_concat(List, ',', Atom).
 
 /**
  * random_string(String) is det.

@@ -40,7 +40,6 @@
 :- use_module(library(http/http_path)).
 :- use_module(library(http/html_head)).
 :- use_module(library(http/http_parameters)).
-:- use_module(library(http/http_json)).
 :- use_module(library(http/http_client)).
 :- use_module(library(http/http_header)).
 :- use_module(library(http/thread_httpd)).
@@ -48,6 +47,8 @@
 /* parsing tools */
 :- use_module(tus/parse).
 :- use_module(tus/utilities).
+
+:- use_module(library(crypto)).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
@@ -125,10 +126,20 @@ tus_expiry_seconds(Seconds) :-
 
 tus_extension(creation).
 tus_extension(expiration).
+tus_extention(checksum).
 
 tus_extension_list(Atom) :-
     findall(Extension,
             tus_extension(Extension),
+            Extensions),
+    comma_list(Atom, Extensions).
+
+tus_checksum_algorithm(md5).
+tus_checksum_algorithm(sha1).
+
+tus_checksum_algorithm_list(Atom) :-
+    findall(Extension,
+            tus_checksum_algorithm(Extension),
             Extensions),
     comma_list(Atom, Extensions).
 
@@ -157,6 +168,46 @@ expiration_timestamp(Expiry) :-
     get_time(Time),
     tus_expiry_seconds(Seconds),
     Expiry is Time + Seconds.
+
+algorithm_checksum_string(md5, Checksum, String) :-
+    md5_hash(String, Checksum, []).
+algorithm_checksum_string(sha1, Checksum, String) :-
+    crypto_data_hash(String, Checksum_Pre, [algorithm(sha1),
+                                            encoding(octet)]),
+    Checksum_Pre = Checksum.
+
+algorithm_checksum_string_value(Algorithm, Checksum, String, Value) :-
+    when(
+        (   ground(Algorithm),
+            ground(Checksum)
+        ;   ground(Value)),
+        atomic_list_concat([Algorithm, Checksum], ' ', Value)
+    ),
+    algorithm_checksum_string(Algorithm, Checksum, String).
+
+/**
+ * tus_checksum(+Upload_Checksum, +String).
+ */
+tus_checksum(Upload_Checksum,String) :-
+    algorithm_checksum_string_value(_Algorithm, _Checksum, String, Upload_Checksum).
+
+tus_algorithm_supported(Upload_Checksum) :-
+    atomic_list_concat([Algorithm, _], ' ', Upload_Checksum),
+    tus_checksum_algorithm(Algorithm).
+
+tus_generate_checksum_header(String, Header, Tus_Options) :-
+    memberchk(tus_checksum_algorithm(Algorithms), Tus_Options),
+    comma_list(Algorithms, Algorithms_List),
+    member(Algorithm, [sha1,md5]), % in this order of precedence
+    memberchk(Algorithm, Algorithms_List),
+    !,
+    algorithm_checksum_string_value(Algorithm, _, String, Upload_Checksum),
+    Header = [request_header('Upload-Checksum'=Upload_Checksum)].
+tus_generate_checksum_header(_, Header, _) :-
+    Header = [].
+
+% Should probably also be an option.
+tus_max_retries(3).
 
 /*
 File store manipulation utilities.
@@ -354,15 +405,20 @@ chunk_directive_(Length, Chunk_Size, [Chunk_Size-New_Length|Directive]) :-
     New_Length is Length - Chunk_Size,
     chunk_directive_(New_Length, Chunk_Size, Directive).
 
-chunk_directive(Length, Chunk_Size, Directive) :-
-    chunk_directive_(Length, Chunk_Size, Reversed),
-    reverse(Reversed, Directive).
+/*
+ * Generators for chunk offsets
+ */
+chunk_directive(Length, Chunk_Size, Current_Offset, Current_Chunk) :-
+    chunk_directive(0, Length, Chunk_Size, Current_Offset, Current_Chunk).
 
-chunk_directive(Offset, Length, Chunk_Size, Directive) :-
-    Remaining is Length - Offset,
-    chunk_directive(Remaining, Chunk_Size, Remaining_Directive),
-    maplist({Offset}/[C-P1,C-P2]>>(P2 is P1 + Offset),
-            Remaining_Directive, Directive).
+chunk_directive(Offset, Length, Chunk_Size, Offset, Current_Chunk) :-
+    Offset < Length,
+    Current_Chunk is min(Chunk_Size, Length - Offset).
+chunk_directive(Offset, Length, Chunk_Size, Current_Offset, Current_Chunk) :-
+    Next_Chunk is min(Chunk_Size, Length - Offset),
+    Next_Offset is Offset + Next_Chunk,
+    Next_Offset < Length,
+    chunk_directive(Next_Offset, Length, Chunk_Size, Current_Offset, Current_Chunk).
 
 /**
  * tus_uri_resource(+Uri, -Resource) is det.
@@ -393,6 +449,40 @@ resumable_endpoint(Request, Name, Endpoint) :-
 http_output_stream(Request, Out) :-
     memberchk(pool(client(_,_,_,Out)), Request).
 
+format_headers(_, []).
+format_headers(Out, [Term|Rest]) :-
+    Term =.. [Atom,Value],
+    format(Out, "~s: ~w~n", [Atom, Value]),
+    format_headers(Out, Rest).
+
+format_custom_response(Out, checksum_mismatch) :-
+    format(Out, "HTTP/1.1 460 Checksum Mismatch~n",[]).
+format_custom_response(Out, gone) :-
+    format(Out, "HTTP/1.1 410 Gone~n",[]).
+
+custom_status_reply(Custom_Response, Out, Headers) :-
+    format_custom_response(Out,Custom_Response),
+    format_headers(Out,Headers),
+    format(Out,"\r\n",[]).
+
+status_code(no_content,204).
+status_code(bad_request,400).
+status_code(forbidden,403).
+status_code(not_found,404).
+status_code(gone,410).
+status_code(unsupported_media,415).
+status_code(bad_checksum,460).
+
+/*
+ * Server dispatch
+ */
+
+/**
+ * tus_dispatch(+Options, +Request) is semidet.
+ *
+ * See tus_dispatch/2
+ *
+ */
 tus_dispatch(Request) :-
     tus_dispatch([],Request).
 
@@ -438,11 +528,13 @@ tus_dispatch(options,_Options,Request) :-
     tus_version_list(Version_List),
     tus_max_size(Max_Size),
     tus_extension_list(Extension_List),
+    tus_checksum_algorithm_list(Algorithm_List),
     http_output_stream(Request, Out),
     http_status_reply(no_content, Out,
                       ['Tus-Resumable'('1.0.0'),
                        'Tus-Version'(Version_List),
                        'Tus-Max-Size'(Max_Size),
+                       'Tus-Checksum-Algorithm'(Algorithm_List),
                        'Tus-Extension'(Extension_List)],
                       204).
 tus_dispatch(post,Options,Request) :-
@@ -503,29 +595,40 @@ tus_dispatch(patch,Options,Request) :-
     atom_number(Offset_Atom, Offset),
 
     http_read_data(Request, Patch, []),
-    tus_uri_resource(URI, Resource),
 
     http_output_stream(Request, Out),
-
-    (   resource_expiry(Resource, Expiry, Options)
-    ->  http_timestamp(Expiry, Expiry_Date),
-        (   get_time(Time),
-            debug(tus, "Time: ~q Expiry: ~q~n", [Time, Expiry]),
-            Time > Expiry
-        ->  http_status_reply(not_found(URI), Out,
-                              % This should be `gone`, not `not_found`
-                              ['Tus-Resumable'('1.0.0'),
-                               'Upload-Expires'(Expiry_Date)],
+    (   memberchk(upload_checksum(Upload_Checksum),Request),
+        \+ tus_checksum(Upload_Checksum,Patch)
+    % We have a checksum to check and it doesn't check out.
+    ->  (   \+ tus_algorithm_supported(Upload_Checksum)
+        % Because the algorithm is unsupported
+        ->  http_status_reply(bad_request('Algorithm Unsupported'), Out,
+                              ['Tus-Resumable'('1.0.0')],
                               _Code)
-        ;   patch_resource(Resource, Patch, Offset, Length, New_Offset, Options),
-            http_status_reply(no_content, Out,
-                              ['Tus-Resumable'('1.0.0'),
-                               'Upload-Expires'(Expiry_Date),
-                               'Upload-Offset'(New_Offset)],
-                              _Code))
-    ;   http_status_reply(not_found(URI), Out,
-                          ['Tus-Resumable'('1.0.0')],
-                          _Code)
+        % Because the checksum is wrong
+        ;   custom_status_reply(checksum_mismatch, Out,
+                                ['Tus-Resumable'('1.0.0')])
+        )
+    % No checksum, or it checks out.
+    ;   tus_uri_resource(URI, Resource),
+        (   resource_expiry(Resource, Expiry, Options)
+        ->  http_timestamp(Expiry, Expiry_Date),
+            (   get_time(Time),
+                debug(tus, "Time: ~q Expiry: ~q~n", [Time, Expiry]),
+                Time > Expiry
+            ->  custom_status_reply(gone, Out,
+                                    ['Tus-Resumable'('1.0.0'),
+                                     'Upload-Expires'(Expiry_Date)])
+            ;   patch_resource(Resource, Patch, Offset, Length, New_Offset, Options),
+                http_status_reply(no_content, Out,
+                                  ['Tus-Resumable'('1.0.0'),
+                                   'Upload-Expires'(Expiry_Date),
+                                   'Upload-Offset'(New_Offset)],
+                                  _Code))
+        ;   http_status_reply(not_found(URI), Out,
+                              ['Tus-Resumable'('1.0.0')],
+                              _Code)
+        )
     ).
 
 /*
@@ -574,25 +677,54 @@ tus_create(Endpoint, File, Length, Resource, Reply_Header, Options) :-
     ->  throw(error(file_already_exists(File), _))
     ;   memberchk(location(Resource), Reply_Header)).
 
-tus_patch(Endpoint, File, Chunk, Position, Options) :-
-    tus_patch(Endpoint, File, Chunk, Position, _Reply_Header, Options).
+tus_patch(Endpoint, File, Chunk, Position, Tus_Options, Options) :-
+    tus_patch(Endpoint, File, Chunk, Position, _Reply_Header, Tus_Options, Options).
 
-tus_patch(Endpoint, File, Chunk, Position, Reply_Header, Options) :-
+tus_patch(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) :-
+    tus_max_retries(Max_Retries),
+    between(0,Max_Retries,_Tries),
+    tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options),
+    !.
+tus_patch(Endpoint, _, _, _, _, _, _) :-
+    tus_max_retries(Max_Retries),
+    throw(error(exceeded_max_retries(Endpoint,Max_Retries),_)).
+
+tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) :-
     setup_call_cleanup(
         open(File, read, Stream, [encoding(octet)]),
         (   seek(Stream, Position, bof, _),
             read_string(Stream, Chunk, String),
-            http_get(Endpoint, _, [
+            tus_generate_checksum_header(String, Header, Tus_Options),
+            append(Options,Header,HdrExtra),
+            http_get(Endpoint, Response, [
                          method(patch),
                          post(bytes('application/offset+octet-stream', String)),
                          request_header('Upload-Offset'=Position),
                          request_header('Tus-Resumable'='1.0.0'),
                          reply_header(Reply_Header),
-                         status_code(204)
-                         |Options
+                         status_code(Code)
+                         |HdrExtra
                      ])
         ),
         close(Stream)
+    ),
+    (   status_code(Status,Code)
+    ->  (   Status = no_content % patched
+        ->  true
+        ;   Status = bad_checksum
+        ->  fail % (i.e. retry)
+        ;   Status = bad_request % No request algorithm
+        ->  throw(error(bad_request(Endpoint), _))
+        ;   Status = not_found
+        ->  throw(error(not_found(Endpoint), _))
+        ;   Status = gone
+        ->  throw(error(gone(Endpoint),_))
+        ;   Status = forbidden
+        ->  throw(error(forbidden(Endpoint),_))
+        ;   Status = unsupported_media
+        ->  throw(error(unsupported_media,_))
+        )
+    ;   throw(error(unhandled_status_code(Code,Response),_))
     ).
 
 tus_head(Resource_URL, Offset, Length, Options) :-
@@ -627,13 +759,12 @@ tus_upload(File, Endpoint, Resource_URL, Options) :-
     tus_options(Endpoint, Tus_Options, Options),
     tus_create(Endpoint, File, Length, Resource_URL, Options),
     tus_client_effective_chunk_size(Tus_Options, Chunk_Size),
-    chunk_directive(Length, Chunk_Size, Directive),
-
-    maplist({File, Resource_URL, Options}/[Chunk-Position]>>(
-                debug(tus, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
-                tus_patch(Resource_URL, File, Chunk, Position, Options)
-            ),
-            Directive).
+    forall(
+        chunk_directive(Length, Chunk_Size, Position, Chunk),
+        (   debug(tus, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
+            tus_patch(Resource_URL, File, Chunk, Position, Tus_Options, Options)
+        )
+    ).
 
 tus_upload(File, Endpoint, Resource_URL) :-
     tus_upload(File, Endpoint, Resource_URL, []).
@@ -652,13 +783,12 @@ tus_resume(File, Endpoint, Resource_URL, Options) :-
     tus_options(Endpoint, Tus_Options, Options),
     tus_head(Resource_URL, Offset, Length, Options),
     tus_client_effective_chunk_size(Tus_Options, Chunk_Size),
-    chunk_directive(Offset, Length, Chunk_Size, Directive),
-
-    maplist({File, Resource_URL, Options}/[Chunk-Position]>>(
-                debug(tus, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
-                tus_patch(Resource_URL, File, Chunk, Position, Options)
-            ),
-            Directive).
+    forall(
+        chunk_directive(Offset, Length, Chunk_Size, Position, Chunk),
+        (   debug(tus, "Chunk: ~q Position: ~q~n", [Chunk, Position]),
+            tus_patch(Resource_URL, File, Chunk, Position, Tus_Options, Options)
+        )
+    ).
 
 tus_resume(File, Endpoint, Resource_URL) :-
     tus_resume(File, Endpoint, Resource_URL, []).
@@ -712,16 +842,16 @@ test(check_expiry, [
     format(Stream, '~s', [Content]),
     close(Stream),
 
+    tus_options(URL, Tus_Options, []),
     tus_create(URL, File, _Length, Resource, Reply_Header_Create, []),
     % TODO: This should actually parse as RFC7231
     %       and check the date is in the future.
     memberchk(upload_expires(_Date_String1),
               Reply_Header_Create),
 
-    tus_patch(Resource, File, 4, 0, Reply_Header_Patch, []),
+    tus_patch(Resource, File, 4, 0, Reply_Header_Patch, Tus_Options, []),
     memberchk(upload_expires(_Date_String2),
               Reply_Header_Patch).
-
 
 test(expired_reinitiated, [
          setup((set_tus_options([tus_client_chunk_size(4),
@@ -730,7 +860,8 @@ test(expired_reinitiated, [
                 random_file(tus_storage_test, Path),
                 Options = [tus_storage_path(Path)],
                 spawn_server(URL, Port, Options))),
-         cleanup(kill_server(Port))
+         cleanup(kill_server(Port)),
+         error(gone(Resource),_)
      ]) :-
 
     random_file('example_txt_tus', File),
@@ -739,13 +870,11 @@ test(expired_reinitiated, [
     format(Stream, '~s', [Content]),
     close(Stream),
 
+    tus_options(URL, Tus_Options, []),
     tus_create(URL, File, _Length, Resource, _, []),
     sleep(1),
-    catch(
-        once(tus_patch(Resource, File, 4, 0, [])),
-        error(existence_error(url,_URL),
-              context(_,status(Status,_))),
-        memberchk(Status, [404, 410])).
+    tus_patch(Resource, File, 4, 0, Tus_Options, []).
+
 
 test(resume, [
          setup((set_tus_options([tus_client_chunk_size(4)]),
@@ -761,8 +890,9 @@ test(resume, [
     format(Stream, '~s', [Content]),
     close(Stream),
 
+    tus_options(URL, Tus_Options, []),
     tus_create(URL, File, _Length, Resource_URL, _, []),
-    tus_patch(Resource_URL, File, 4, 0, []),
+    tus_patch(Resource_URL, File, 4, 0, Tus_Options, []),
 
     tus_resume(File, URL, Resource_URL),
 
@@ -771,6 +901,46 @@ test(resume, [
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
+
+test(bad_checksum, [
+         setup((set_tus_options([tus_client_chunk_size(4)]),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
+         cleanup(kill_server(Port)),
+         error(exceeded_max_retries(Resource_URL,_Tries),_)
+     ]) :-
+
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
+    Content = "something else for a change",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+
+    tus_options(URL, Tus_Options, []),
+    tus_create(URL, File, _Length, Resource_URL, _, []),
+    tus_patch(Resource_URL, File, 4, 0, Tus_Options,
+              [request_header('Upload-Checksum'='sha1 33fd0301077bc24fc6513513c71e288fcecc0c66')]).
+
+test(bad_checksum_algo, [
+         setup((set_tus_options([tus_client_chunk_size(4)]),
+                random_file(tus_storage_test, Path),
+                Options = [tus_storage_path(Path)],
+                spawn_server(URL, Port, Options))),
+         cleanup(kill_server(Port)),
+         error(bad_request(_),_)
+     ]) :-
+
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
+    Content = "something else for a change",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+
+    tus_options(URL, Tus_Options, []),
+    tus_create(URL, File, _Length, Resource_URL, _, []),
+    tus_patch(Resource_URL, File, 4, 0, Tus_Options,
+              [request_header('Upload-Checksum'='scrunchy asdffdsa')]).
 
 /* Authorization
 

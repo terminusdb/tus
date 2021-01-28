@@ -10,6 +10,7 @@ The package implements the core protocol along with two extensions:
 
 * Creation
 * Expiration
+* Checksum
 
 # Options
 
@@ -102,9 +103,12 @@ refer to the resource in subsequent communication.
 
 The remaining extensions would be desirable:
 
-* Checksum
+* Creation with Upload
 * Concatenation
 * Termination
+
+In addition the Creation extension should be checked from the Options
+call before initiatiating an upload.
 
 ## Copyright
 
