@@ -1,14 +1,22 @@
 :- module(tus, [set_tus_options/1,          % +Options
+                % server
                 tus_dispatch/1,             % +Request
                 tus_dispatch/2,             % +Options, +Request
                 tus_dispatch/3,             % +Method, +Options, +Request
-                tus_upload/3,               % +File, +Endpoint_URI, +Resource_URI
-                tus_upload/4,               % +File, +Endpoint_URI, +Resource_URI,
-                                            % +Options
-                tus_resume/3,               % +File, +Endpoint_URI, +Resource_URI
-                tus_resume/4,               % +File, +Endpoint_URI, +Resource_URI,
-                                            % +Options
+
+                % client
+                tus_options/3,              % +Endpoint_URI, -Tus_Options, +Options
+
+                tus_upload/3,               % +File, +Endpoint_URI, -Resource_URI
+                tus_upload/4,               % +File, +Endpoint_URI, -Resource_URI,
+                                            %   +Options
+                tus_resume/3,               % +File, +Endpoint_URI, ?Resource_URI
+                tus_resume/4,               % +File, +Endpoint_URI, ?Resource_URI,
+                                            %   +Options
+                tus_delete/3,               % +Resource_URI, +TUS_Options, +Options
+
                 tus_uri_resource/2,         % +URI, -Resource
+
                 tus_resource_path/3         % +Resource, -Path, +Options
                ]).
 
