@@ -11,6 +11,7 @@ The package implements the core protocol along with two extensions:
 * Creation
 * Expiration
 * Checksum
+* Termination
 
 # Options
 
@@ -105,7 +106,6 @@ The remaining extensions would be desirable:
 
 * Creation with Upload
 * Concatenation
-* Termination
 
 In addition the Creation extension should be checked from the Options
 call before initiatiating an upload.
