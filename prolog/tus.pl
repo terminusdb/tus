@@ -137,8 +137,9 @@ tus_extension_list(Atom) :-
             Extensions),
     atomic_list_concat(Extensions, ',', Atom).
 
-tus_checksum_algorithm(md5).
+% In precedence order
 tus_checksum_algorithm(sha1).
+tus_checksum_algorithm(md5).
 
 tus_checksum_algorithm_list(Atom) :-
     findall(Extension,
@@ -201,8 +202,8 @@ tus_algorithm_supported(Upload_Checksum) :-
 
 tus_generate_checksum_header(String, Header, Tus_Options) :-
     memberchk(tus_checksum_algorithm(Algorithms), Tus_Options),
-    member(Algorithm, [sha1,md5]), % in this order of precedence
-    memberchk(Algorithm, Algorithms),
+    tus_checksum_algorithm(Algorithm), % in this order of precedence
+    member(Algorithm, Algorithms),
     !,
     algorithm_checksum_string_value(Algorithm, _, String, Upload_Checksum),
     Header = [request_header('Upload-Checksum'=Upload_Checksum)].
@@ -289,6 +290,14 @@ tus_expiry_path(Resource, Path, Options) :-
     tus_expiry_suffix(Offset),
     atomic_list_concat([RPath, '/', Offset], Path).
 
+tus_metadata_suffix('metadata').
+
+tus_metadata_path(Resource, Path, Options) :-
+    tus_resource_base_path(Resource, RPath, Options),
+    tus_metadata_suffix(Metadata),
+    atomic_list_concat([RPath, '/', Metadata], Path).
+
+
 % turns exception into failure.
 try_make_directory(Directory) :-
     catch(
@@ -347,8 +356,27 @@ set_resource_expiry(Resource, Size, Options) :-
         close(SP)
     ).
 
+resource_metadata(Resource, Metadata, Options) :-
+    tus_metadata_path(Resource, Metadata_File, Options),
+    path_contents(Metadata_File, Metadata_String),
+    read_term_from_atom(Metadata_String, Metadata, []).
+
+set_resource_metadata(Resource, Metadata, Options) :-
+    setup_call_cleanup(
+        (   tus_metadata_path(Resource, Metadata_Path, Options),
+            open(Metadata_Path, write, OP)),
+        format(OP, "~q", [Metadata]),
+        close(OP)
+    ).
+
+
 % member(Status, [exists, expires(Expiry)])
-create_file_resource(File, Size, Name, Status, Options) :-
+create_file_resource(Metadata, Size, Name, Status, Options) :-
+    (   memberchk(filename-File, Metadata)
+    ->  true
+    ;   random_string(File)
+    ),
+
     tus_resource_name(File, Name),
     tus_resource_base_path(Name, Path, Options),
     (   try_make_directory(Path)
@@ -369,7 +397,10 @@ create_file_resource(File, Size, Name, Status, Options) :-
 
                     % Expires
                     expiration_timestamp(Expiry),
-                    set_resource_expiry(Name, Expiry, Options)
+                    set_resource_expiry(Name, Expiry, Options),
+
+                    % Metadata
+                    set_resource_metadata(Name, Metadata, Options)
                 ),
                 close(FP)
             ),
@@ -582,15 +613,14 @@ tus_dispatch(post,Options,Request) :-
     memberchk(upload_length(Length_Atom),Request),
     atom_number(Length_Atom, Length),
 
-    memberchk(upload_metadata(Metadata),Request),
-    parse_upload_metadata(Metadata, Struct),
+    memberchk(upload_metadata(Metadata_Atom),Request),
+    debug(tus, "~q", [Metadata_Atom]),
+    parse_upload_metadata(Metadata_Atom, Metadata),
 
     memberchk(tus_resumable(Version),Request),
     accept_tus_version(Version),
 
-    Struct = filename(File,_Options), % ignoring options for the minute
-
-    create_file_resource(File, Length, Name, Status, Options),
+    create_file_resource(Metadata, Length, Name, Status, Options),
     resumable_endpoint(Request, Name, Endpoint),
     http_output_stream(Request, Out),
 
@@ -725,7 +755,7 @@ tus_create(Endpoint, File, Length, Resource, Reply_Header, Tus_Options, Options)
     ;   throw(error(no_creation_extention(Endpoint), _))),
 
     size_file(File, Length),
-    parse_upload_metadata(Metadata,filename(File,[])),
+    parse_upload_metadata(Metadata,[filename-File]),
     http_get(Endpoint, Response, [
                  method(post),
                  request_header('Upload-Length'=Length),

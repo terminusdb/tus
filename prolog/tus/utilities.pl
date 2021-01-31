@@ -1,4 +1,5 @@
 :- module(utilities, [
+              random_string/1,
               random_file/2
           ]).
 
