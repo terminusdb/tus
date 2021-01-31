@@ -633,8 +633,7 @@ tus_dispatch(post,Options,Request) :-
         http_timestamp(Expiry, Expiry_Date),
         http_status_reply(created(Endpoint), Out,
                           ['Tus-Resumable'('1.0.0'),
-                           'Upload-Expires'(Expiry_Date),
-                           'Location'(Endpoint)],
+                           'Upload-Expires'(Expiry_Date)],
                           _Code)).
 tus_dispatch(head,Options,Request) :-
     % Find position
