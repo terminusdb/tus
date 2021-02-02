@@ -6,7 +6,7 @@ TUS protocol for resumable file uploads via HTTP in swipl (see:
 
 This package implements both the server handlers and a simple client.
 
-The package implements the core protocol along with two extensions:
+The package implements the core protocol along with four extensions:
 
 * Creation
 * Expiration
