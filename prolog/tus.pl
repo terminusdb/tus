@@ -559,7 +559,7 @@ tus_dispatch(Request) :-
 /**
  * tus_dispatch(+Options, +Request) is semidet.
  *
- * Dispatchs various TUS requests to the apropriate handlers.
+ * Dispatches various TUS requests to the appropriate handlers.
  *
  * Should be callable from `http_handler/3` with something along the lines of:
  *

@@ -108,7 +108,7 @@ The remaining extensions would be desirable:
 * Concatenation
 
 In addition the Creation extension should be checked from the Options
-call before initiatiating an upload.
+call before initiating an upload.
 
 ## Copyright
 
@@ -119,4 +119,3 @@ obtain a copy of the License at
 ```
 http://www.apache.org/licenses/LICENSE-2.0
 ```
-
