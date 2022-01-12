@@ -4,6 +4,9 @@
 
 /* parsing */
 
+:- use_module(library(when)).
+:- use_module(library(base64)).
+
 assoc_metadata_parts([], []).
 assoc_metadata_parts([Key-Value|Rest_A], [Meta|Rest_B]) :-
     when((   ground(Value)

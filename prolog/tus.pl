@@ -51,6 +51,7 @@
 :- use_module(tus/utilities).
 
 :- use_module(library(crypto)).
+:- use_module(library(error)).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
