@@ -921,7 +921,7 @@ tus_resume(File, Endpoint, Resource_URL) :-
 /* Tests */
 
 :- begin_tests(tus).
-
+:- use_module(library(random)).
 
 spawn_server(URL, Port, Options) :-
     random_between(49152, 65535, Port),
