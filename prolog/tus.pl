@@ -50,7 +50,13 @@
 :- use_module(tus/parse).
 :- use_module(tus/utilities).
 
+:- use_module(library(apply)).
 :- use_module(library(crypto)).
+:- use_module(library(debug)).
+:- use_module(library(error)).
+:- use_module(library(lists)).
+:- use_module(library(option)).
+:- use_module(library(readutil)).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
