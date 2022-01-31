@@ -2,6 +2,8 @@
               parse_upload_metadata/2
           ]).
 
+:- use_module(library(plunit)).
+
 /* parsing */
 
 assoc_metadata_parts([], []).
