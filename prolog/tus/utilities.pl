@@ -3,7 +3,7 @@
               random_file/2
           ]).
 
-use_module(library(random)).
+:- use_module(library(random)).
 
 /**
  * random_string(String) is det.
