@@ -59,6 +59,9 @@
 :- use_module(library(readutil)).
 :- use_module(library(md5)).
 :- use_module(library(when)).
+:- use_module(library(yall)).
+
+:- use_module(library(plunit)).
 
 /* Options */
 :- meta_predicate valid_options(+, 1).
