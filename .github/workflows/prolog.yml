@@ -10,13 +10,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      - name: Install python requirements
-        run: pip install beautifulsoup4 requests
+      - name: Install swipl
+        run: |
+          sudo apt-add-repository "ppa:swi-prolog/stable"
+          sudo apt-get update
+          sudo apt-get install swi-prolog-nox
         # Can be found on: https://github.com/terminusdb-labs/swipl-lint/
       - name: Download script
-        run: curl -L 'https://raw.githubusercontent.com/terminusdb-labs/swipl-lint/v0.1/lint_modules.py' > lint_modules.py
+        run: curl -L 'https://raw.githubusercontent.com/terminusdb-labs/swipl-lint/v0.7/pl_lint.pl' > pl_lint.pl
       - name: Run linter
-        run: python3 lint_modules.py
+        run: swipl pl_lint.pl
   build:
     runs-on: ubuntu-latest
 
