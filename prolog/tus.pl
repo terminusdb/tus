@@ -1182,7 +1182,6 @@ test(resumable_endpoint_option, [
                                 ]),
                 random_file(tus_storage_test, Path),
                 make_directory(Path),
-                Options = [tus_storage_path(Path)],
                 Base = 'http://cloudapi.com:8080/TerminusX/api/files',
                 spawn_auth_server(URL, Port, [resumable_endpoint_base(Base),tus_storage_path(Path)]))),
          cleanup(kill_server(Port))
@@ -1194,7 +1193,7 @@ test(resumable_endpoint_option, [
     format(Stream, '~s', [Content]),
     close(Stream),
     tus_options(URL, Tus_Options, [authorization(basic(me,pass))]),
-    tus_create(URL, File, Length, Resource_URL, Tus_Options, [authorization(basic(me,pass))]),
+    tus_create(URL, File, _Length, Resource_URL, Tus_Options, [authorization(basic(me,pass))]),
 
     string_length(Base, Len),
     sub_string(Resource_URL, 0, Len, _, Base).
