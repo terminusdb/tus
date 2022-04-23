@@ -515,10 +515,18 @@ terminal_slash(Atom, Slashed) :-
     ->  Atom = Slashed
     ;   atomic_list_concat([Atom, '/'], Slashed)).
 
-resumable_endpoint(Request, Name, Endpoint) :-
+resumable_endpoint(_, Name, Endpoint, Options) :-
+    memberchk(resumable_endpoint_base(Pre_Base), Options),
+    !,
+    terminal_slash(Pre_Base,Base),
+    format(atom(Endpoint), "~s~s",[Base,Name]).
+resumable_endpoint(Request, Name, Endpoint, _Options) :-
     memberchk(protocol(Protocol),Request),
     memberchk(host(Server),Request),
-    memberchk(port(Port),Request),
+    (   memberchk(port(Port),Request)
+    ->  true
+    ;   Port = 80
+    ),
     memberchk(request_uri(Pre_Base),Request),
     terminal_slash(Pre_Base,Base),
     format(atom(Endpoint), "~s://~s:~d~s~s", [Protocol,Server,Port,Base,Name]).
@@ -621,31 +629,37 @@ tus_dispatch(options,_Options,Request) :-
 tus_dispatch(post,Options,Request) :-
     % Create
     !,
-    memberchk(upload_length(Length_Atom),Request),
-    atom_number(Length_Atom, Length),
+    commands(
+        {
+            memberchk(upload_length(Length_Atom),Request),
+            atom_number(Length_Atom, Length),
 
-    memberchk(upload_metadata(Metadata_Atom),Request),
-    debug(tus, "~q", [Metadata_Atom]),
-    parse_upload_metadata(Metadata_Atom, Metadata),
+            memberchk(upload_metadata(Metadata_Atom),Request),
+            debug(tus, "~q", [Metadata_Atom]),
+            parse_upload_metadata(Metadata_Atom, Metadata),
 
-    memberchk(tus_resumable(Version),Request),
-    accept_tus_version(Version),
+            memberchk(tus_resumable(Version),Request),
+            accept_tus_version(Version),
 
-    create_file_resource(Metadata, Length, Name, Status, Options),
-    resumable_endpoint(Request, Name, Endpoint),
-    http_output_stream(Request, Out),
+            create_file_resource(Metadata, Length, Name, Status, Options),
 
-    (   Status = exists
-    ->  http_status_reply(conflict, Out,
-                          ['Tus-Resumable'('1.0.0'),
-                           'Location'(Endpoint)],
-                          _Code)
-    ;   Status = expires(Expiry),
-        http_timestamp(Expiry, Expiry_Date),
-        http_status_reply(created(Endpoint), Out,
-                          ['Tus-Resumable'('1.0.0'),
-                           'Upload-Expires'(Expiry_Date)],
-                          _Code)).
+            resumable_endpoint(Request, Name, Endpoint, Options),
+
+            http_output_stream(Request, Out),
+            (   Status = exists
+            ->  http_status_reply(conflict, Out,
+                                  ['Tus-Resumable'('1.0.0'),
+                                   'Location'(Endpoint)],
+                                  _Code1)
+            ;   Status = expires(Expiry),
+                http_timestamp(Expiry, Expiry_Date),
+                http_status_reply(created(Endpoint), Out,
+                                  ['Tus-Resumable'('1.0.0'),
+                                   'Upload-Expires'(Expiry_Date)],
+                                  _Code2)
+            )
+        }
+    ).
 tus_dispatch(head,Options,Request) :-
     % Find position
     !,
@@ -1161,5 +1175,28 @@ test(auth_test, [
     read_file_to_string(Resource, Result, []),
 
     Result = Content.
+
+test(resumable_endpoint_option, [
+         setup((set_tus_options([tus_client_chunk_size(4000),
+                                 tus_expiry_seconds(1)
+                                ]),
+                random_file(tus_storage_test, Path),
+                make_directory(Path),
+                Options = [tus_storage_path(Path)],
+                Base = 'http://cloudapi.com:8080/TerminusX/api/files',
+                spawn_auth_server(URL, Port, [resumable_endpoint_base(Base),tus_storage_path(Path)]))),
+         cleanup(kill_server(Port))
+     ]) :-
+
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
+    Content = "asdf fdsa yes yes yes",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+    tus_options(URL, Tus_Options, [authorization(basic(me,pass))]),
+    tus_create(URL, File, Length, Resource_URL, Tus_Options, [authorization(basic(me,pass))]),
+
+    string_length(Base, Len),
+    sub_string(Resource_URL, 0, Len, _, Base).
 
 :- end_tests(tus).
