@@ -629,36 +629,32 @@ tus_dispatch(options,_Options,Request) :-
 tus_dispatch(post,Options,Request) :-
     % Create
     !,
-    commands(
-        {
-            memberchk(upload_length(Length_Atom),Request),
-            atom_number(Length_Atom, Length),
+    memberchk(upload_length(Length_Atom),Request),
+    atom_number(Length_Atom, Length),
 
-            memberchk(upload_metadata(Metadata_Atom),Request),
-            debug(tus, "~q", [Metadata_Atom]),
-            parse_upload_metadata(Metadata_Atom, Metadata),
+    memberchk(upload_metadata(Metadata_Atom),Request),
+    debug(tus, "~q", [Metadata_Atom]),
+    parse_upload_metadata(Metadata_Atom, Metadata),
 
-            memberchk(tus_resumable(Version),Request),
-            accept_tus_version(Version),
+    memberchk(tus_resumable(Version),Request),
+    accept_tus_version(Version),
 
-            create_file_resource(Metadata, Length, Name, Status, Options),
+    create_file_resource(Metadata, Length, Name, Status, Options),
 
-            resumable_endpoint(Request, Name, Endpoint, Options),
+    resumable_endpoint(Request, Name, Endpoint, Options),
 
-            http_output_stream(Request, Out),
-            (   Status = exists
-            ->  http_status_reply(conflict, Out,
-                                  ['Tus-Resumable'('1.0.0'),
-                                   'Location'(Endpoint)],
-                                  _Code1)
-            ;   Status = expires(Expiry),
-                http_timestamp(Expiry, Expiry_Date),
-                http_status_reply(created(Endpoint), Out,
-                                  ['Tus-Resumable'('1.0.0'),
-                                   'Upload-Expires'(Expiry_Date)],
-                                  _Code2)
-            )
-        }
+    http_output_stream(Request, Out),
+    (   Status = exists
+    ->  http_status_reply(conflict, Out,
+                          ['Tus-Resumable'('1.0.0'),
+                           'Location'(Endpoint)],
+                          _Code1)
+    ;   Status = expires(Expiry),
+        http_timestamp(Expiry, Expiry_Date),
+        http_status_reply(created(Endpoint), Out,
+                          ['Tus-Resumable'('1.0.0'),
+                           'Upload-Expires'(Expiry_Date)],
+                          _Code2)
     ).
 tus_dispatch(head,Options,Request) :-
     % Find position
@@ -810,8 +806,8 @@ tus_patch(Endpoint, _, _, _, _, _, _) :-
     tus_max_retries(Max_Retries),
     throw(error(exceeded_max_retries(Endpoint,Max_Retries),_)).
 
-tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) :-
-    setup_call_cleanup(
+tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) :- 
+   setup_call_cleanup(
         open(File, read, Stream, [encoding(octet)]),
         (   seek(Stream, Position, bof, _),
             read_string(Stream, Chunk, String),
