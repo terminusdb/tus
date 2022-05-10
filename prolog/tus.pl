@@ -544,6 +544,8 @@ format_headers(Out, [Term|Rest]) :-
 
 format_custom_response(Out, checksum_mismatch) :-
     format(Out, "HTTP/1.1 460 Checksum Mismatch~n",[]).
+format_custom_response(Out, conflict) :-
+    format(Out, "HTTP/1.1 409 Conflict~n",[]).
 format_custom_response(Out, gone) :-
     format(Out, "HTTP/1.1 410 Gone~n",[]).
 
@@ -645,10 +647,9 @@ tus_dispatch(post,Options,Request) :-
 
     http_output_stream(Request, Out),
     (   Status = exists
-    ->  http_status_reply(conflict, Out,
-                          ['Tus-Resumable'('1.0.0'),
-                           'Location'(Endpoint)],
-                          _Code1)
+    ->  custom_status_reply(conflict, Out,
+                            ['Tus-Resumable'('1.0.0'),
+                             'Location'(Endpoint)])
     ;   Status = expires(Expiry),
         http_timestamp(Expiry, Expiry_Date),
         http_status_reply(created(Endpoint), Out,
@@ -1194,5 +1195,25 @@ test(resumable_endpoint_option, [
 
     string_length(Base, Len),
     sub_string(Resource_URL, 0, Len, _, Base).
+
+test(conflict, [
+         setup((set_tus_options([tus_client_chunk_size(4),
+                                 tus_expiry_seconds(1)
+                                ]),
+                random_file(tus_storage_test, Path),
+                make_directory(Path),
+                spawn_auth_server(URL, Port, [tus_storage_path(Path)]))),
+         cleanup(kill_server(Port)),
+         error(file_already_exists(File) ,_)
+     ]) :-
+
+    random_file('example_txt_tus', File),
+    open(File, write, Stream),
+    Content = "And now for something completely different...",
+    format(Stream, '~s', [Content]),
+    close(Stream),
+
+    tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]),
+    tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]).
 
 :- end_tests(tus).
