@@ -1213,7 +1213,7 @@ test(conflict, [
     format(Stream, '~s', [Content]),
     close(Stream),
 
-    tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]),
-    tus_upload(File, URL, _Resource, [authorization(basic(me,pass))]).
+    tus_upload(File, URL, _Resource1, [authorization(basic(me,pass))]),
+    tus_upload(File, URL, _Resource2, [authorization(basic(me,pass))]).
 
 :- end_tests(tus).
