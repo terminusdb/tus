@@ -626,8 +626,7 @@ tus_dispatch(options,_Options,Request) :-
                        'Tus-Version'(Version_List),
                        'Tus-Max-Size'(Max_Size),
                        'Tus-Checksum-Algorithm'(Algorithm_List),
-                       'Tus-Extension'(Extension_List),
-                       'Content-Length'(0)
+                       'Tus-Extension'(Extension_List)
                       ],
                       204).
 tus_dispatch(post,Options,Request) :-
@@ -761,13 +760,13 @@ tus_process_options([X|Rest_In],[X|Rest_Out]) :-
     tus_process_options(Rest_In, Rest_Out).
 
 tus_options(Endpoint, Tus_Options, Options) :-
-    http_get(Endpoint, _, [
-                 method(options),
-                 reply_header(Pre_Options),
-                 status_code(204)
-                 |Options
-             ]),
-    tus_process_options(Pre_Options, Tus_Options).
+    http_client:headers_option(Options, Options1, Headers),
+    option(reply_header(Headers), Options, _),
+    http_client:http_open(Endpoint, In, [method(options),
+                                         status_code(204)
+                                         |Options1]),
+    close(In),
+    tus_process_options(Headers, Tus_Options).
 
 tus_create(Endpoint, File, Length, Resource, Tus_Options, Options) :-
     tus_create(Endpoint, File, Length, Resource, _, Tus_Options, Options).
