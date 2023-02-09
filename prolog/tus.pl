@@ -626,7 +626,9 @@ tus_dispatch(options,_Options,Request) :-
                        'Tus-Version'(Version_List),
                        'Tus-Max-Size'(Max_Size),
                        'Tus-Checksum-Algorithm'(Algorithm_List),
-                       'Tus-Extension'(Extension_List)],
+                       'Tus-Extension'(Extension_List),
+                       'Content-Length'(0)
+                      ],
                       204).
 tus_dispatch(post,Options,Request) :-
     % Create
@@ -782,7 +784,7 @@ tus_create(Endpoint, File, Length, Resource, Reply_Header, Tus_Options, Options)
                  request_header('Upload-Length'=Length),
                  request_header('Upload-Metadata'=Metadata),
                  request_header('Tus-Resumable'='1.0.0'),
-		 request_header('Content-Length'=0),
+		         request_header('Content-Length'=0),
                  content_length(0),
                  reply_header(Reply_Header),
                  status_code(Code)
