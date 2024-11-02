@@ -821,7 +821,6 @@ tus_patch_(Endpoint, File, Chunk, Position, Reply_Header, Tus_Options, Options) 
                          post(bytes('application/offset+octet-stream', String)),
                          request_header('Upload-Offset'=Position),
                          request_header('Tus-Resumable'='1.0.0'),
-                         request_header('Content-Length'=Chunk),
                          reply_header(Reply_Header),
                          status_code(Code)
                          |HdrExtra
