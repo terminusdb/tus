@@ -22,7 +22,12 @@ parse_upload_metadata(Atom, Assoc) :-
     when(
         (   ground(Assoc)
         ;   ground(Parts)),
-        assoc_metadata_parts(Assoc, Parts)
+        % once/1 needed for SWI-Prolog 10: assoc_metadata_parts/2 has two clauses
+        % that can both match when Assoc is unbound, leaving a choicepoint.
+        % SWI-Prolog 10 preserves choicepoints in delayed goals more strictly than v9.
+        % The predicate logically has exactly one solution, so once/1 eliminates
+        % the choicepoint warning while preserving correct semantics.
+        once(assoc_metadata_parts(Assoc, Parts))
     ),
     atomic_list_concat(Parts, ',', Atom).
 
